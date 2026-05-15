@@ -1,0 +1,12 @@
+# Render Blueprint（Dashboard から Web Service を作るだけでも可）
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: sheruru
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
