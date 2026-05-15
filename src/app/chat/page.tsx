@@ -50,6 +50,10 @@ function ChatContent() {
   const ttsFetchAbortRef = useRef<AbortController | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const conversationIdRef = useRef<string | null>(null)
+  const audioUnlockedRef = useRef(false)
+  const [ttsError, setTtsError] = useState<string | null>(null)
+  const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
 
   const getUserBadgeIcon = useCallback(() => {
     if (profile?.selected_badge === 'sherpa' && profile?.is_sherpa) {
@@ -62,8 +66,27 @@ function ChatContent() {
   }, [profile])
 
   useEffect(() => {
+    conversationIdRef.current = conversationId
+  }, [conversationId])
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
+
+  const unlockAudioPlayback = useCallback(() => {
+    if (audioUnlockedRef.current) return
+    const probe = new Audio()
+    probe.muted = true
+    probe
+      .play()
+      .then(() => {
+        probe.pause()
+        audioUnlockedRef.current = true
+      })
+      .catch(() => {
+        /* 初回タップで unlock されるまで待つ */
+      })
+  }, [])
 
   const disposeTts = useCallback(() => {
     ttsFetchAbortRef.current?.abort()
@@ -160,8 +183,146 @@ function ChatContent() {
     setIsTyping(false)
   }, [disposeTts])
 
+  const playTTS = useCallback((text: string): Promise<void> => {
+    disposeTts()
+    setTtsError(null)
+    const ac = new AbortController()
+    ttsFetchAbortRef.current = ac
+    const signal = ac.signal
+
+    const finish = () => {
+      if (ttsFetchAbortRef.current === ac) {
+        ttsFetchAbortRef.current = null
+      }
+    }
+
+    return new Promise(async (resolve) => {
+      const end = () => {
+        finish()
+        resolve()
+      }
+
+      try {
+        let ttsText = text
+        if (text.length > 2000) {
+          const cutoff = text.slice(0, 2000).lastIndexOf('。')
+          ttsText = cutoff > 100 ? text.slice(0, cutoff + 1) : text.slice(0, 2000)
+        }
+
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: ttsText }),
+          signal,
+        })
+
+        if (signal.aborted) {
+          end()
+          return
+        }
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}))
+          const msg =
+            res.status === 503
+              ? '音声は未設定です（Render の ELEVENLABS_API_KEY を確認）'
+              : '音声の生成に失敗しました'
+          setTtsError((errBody as { error?: string }).error || msg)
+          end()
+          return
+        }
+
+        const audioBlob = await res.blob()
+        if (signal.aborted) {
+          end()
+          return
+        }
+
+        const audioUrl = URL.createObjectURL(audioBlob)
+        currentTtsObjectUrlRef.current = audioUrl
+
+        const audio = new Audio(audioUrl)
+        audioRef.current = audio
+
+        audio.onplay = () => {
+          if (signal.aborted) return
+          setTtsError(null)
+          setPendingTtsText(null)
+          setIsTalking(true)
+          setIsPlayingAudio(true)
+          setCurrentEmotion('neutraltalking')
+        }
+
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl)
+          if (currentTtsObjectUrlRef.current === audioUrl) {
+            currentTtsObjectUrlRef.current = null
+          }
+          if (!signal.aborted) {
+            setIsTalking(false)
+            setIsPlayingAudio(false)
+            setCurrentEmotion('neutral')
+          }
+          end()
+        }
+
+        audio.onerror = () => {
+          URL.revokeObjectURL(audioUrl)
+          if (currentTtsObjectUrlRef.current === audioUrl) {
+            currentTtsObjectUrlRef.current = null
+          }
+          if (!signal.aborted) {
+            setIsTalking(false)
+            setIsPlayingAudio(false)
+            setCurrentEmotion('neutral')
+            setTtsError('音声の再生に失敗しました')
+          }
+          end()
+        }
+
+        if (signal.aborted) {
+          URL.revokeObjectURL(audioUrl)
+          if (currentTtsObjectUrlRef.current === audioUrl) {
+            currentTtsObjectUrlRef.current = null
+          }
+          audioRef.current = null
+          end()
+          return
+        }
+
+        try {
+          await audio.play()
+        } catch (playErr) {
+          if (
+            playErr instanceof DOMException &&
+            (playErr.name === 'NotAllowedError' || playErr.name === 'AbortError')
+          ) {
+            setPendingTtsText(text)
+            setTtsError('タップして音声を再生')
+            end()
+            return
+          }
+          throw playErr
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          disposeTts()
+          end()
+          return
+        }
+        disposeTts()
+        setIsTalking(false)
+        setIsPlayingAudio(false)
+        setCurrentEmotion('neutral')
+        setTtsError('音声の再生に失敗しました')
+        end()
+      }
+    })
+  }, [disposeTts])
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return
+
+    unlockAudioPlayback()
 
     if (isTyping) {
       cancelCurrentResponse()
@@ -178,12 +339,13 @@ function ChatContent() {
 
     const controller = new AbortController()
     abortControllerRef.current = controller
+    const activeConversationId = conversationIdRef.current
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, mode, conversationId }),
+        body: JSON.stringify({ message: text, mode, conversationId: activeConversationId }),
         signal: controller.signal,
       })
 
@@ -253,9 +415,11 @@ function ChatContent() {
       setIsTyping(false)
       resetSuggestions()
     }
-  }, [isTyping, mode, conversationId, cancelCurrentResponse])
+  }, [isTyping, mode, cancelCurrentResponse, audioEnabled, playTTS, unlockAudioPlayback])
 
   const toggleRecording = useCallback(() => {
+    unlockAudioPlayback()
+
     if (isRecording) {
       recognitionRef.current?.stop()
       setIsRecording(false)
@@ -299,121 +463,7 @@ function ChatContent() {
 
     recognition.start()
     setIsRecording(true)
-  }, [isRecording, sendMessage])
-
-  const playTTS = (text: string): Promise<void> => {
-    disposeTts()
-    const ac = new AbortController()
-    ttsFetchAbortRef.current = ac
-    const signal = ac.signal
-
-    const finish = () => {
-      if (ttsFetchAbortRef.current === ac) {
-        ttsFetchAbortRef.current = null
-      }
-    }
-
-    return new Promise(async (resolve) => {
-      const end = () => {
-        finish()
-        resolve()
-      }
-
-      try {
-        let ttsText = text
-        if (text.length > 2000) {
-          const cutoff = text.slice(0, 2000).lastIndexOf('。')
-          ttsText = cutoff > 100 ? text.slice(0, cutoff + 1) : text.slice(0, 2000)
-        }
-
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: ttsText }),
-          signal,
-        })
-
-        if (signal.aborted) {
-          end()
-          return
-        }
-        if (!res.ok) {
-          end()
-          return
-        }
-
-        const audioBlob = await res.blob()
-        if (signal.aborted) {
-          end()
-          return
-        }
-
-        const audioUrl = URL.createObjectURL(audioBlob)
-        currentTtsObjectUrlRef.current = audioUrl
-
-        const audio = new Audio(audioUrl)
-        audioRef.current = audio
-
-        // Audio starts → Avatar starts talking motion
-        audio.onplay = () => {
-          if (signal.aborted) return
-          setIsTalking(true)
-          setIsPlayingAudio(true)
-          setCurrentEmotion('neutraltalking')
-        }
-
-        // Audio ends → Avatar stops talking
-        audio.onended = () => {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
-          }
-          if (!signal.aborted) {
-            setIsTalking(false)
-            setIsPlayingAudio(false)
-            setCurrentEmotion('neutral')
-          }
-          end()
-        }
-
-        audio.onerror = () => {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
-          }
-          if (!signal.aborted) {
-            setIsTalking(false)
-            setIsPlayingAudio(false)
-            setCurrentEmotion('neutral')
-          }
-          end()
-        }
-
-        if (signal.aborted) {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
-          }
-          audioRef.current = null
-          end()
-          return
-        }
-
-        await audio.play()
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          disposeTts()
-          end()
-          return
-        }
-        disposeTts()
-        setIsTalking(false)
-        setIsPlayingAudio(false)
-        setCurrentEmotion('neutral')
-        end()
-      }
-    })
-  }
+  }, [isRecording, sendMessage, unlockAudioPlayback])
 
   const handleGood = async (msgId: string, serverMsgId?: string) => {
     setMessages((prev) =>
@@ -502,8 +552,12 @@ function ChatContent() {
             <span className={`text-sm font-semibold ${modeInfo.color}`}>● {modeInfo.label}</span>
             <button
               onClick={() => {
+                cancelCurrentResponse()
                 setMessages([{ id: '1', role: 'assistant', content: 'どんな悩みがあるのかな？\nなんでも答えるよ？', showActions: false, actionTaken: null }])
                 setConversationId(null)
+                conversationIdRef.current = null
+                setTtsError(null)
+                setPendingTtsText(null)
                 resetSuggestions()
               }}
               className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-light)] hover:text-[var(--color-text)]"
@@ -622,6 +676,26 @@ function ChatContent() {
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {ttsError && (
+            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-2">
+              <div className="mx-auto flex max-w-2xl items-center justify-between gap-2">
+                <p className="text-xs text-orange-600">{ttsError}</p>
+                {pendingTtsText && audioEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      unlockAudioPlayback()
+                      void playTTS(pendingTtsText)
+                    }}
+                    className="shrink-0 rounded-lg bg-[var(--color-accent)] px-3 py-1 text-xs text-white"
+                  >
+                    再生する
+                  </button>
+                )}
               </div>
             </div>
           )}

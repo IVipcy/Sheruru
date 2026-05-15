@@ -67,17 +67,19 @@ export async function POST(req: NextRequest) {
     ? `\n\n【回答の情報源ルール】\n以下の参考ナレッジを最優先で使って回答すること。ナレッジに書かれている内容はそのまま信頼して回答してよい。ナレッジに含まれない内容について回答する場合は「※この部分は一般的な知識に基づく回答です」と明記すること。\n\n--- 参考ナレッジ ---\n${context}\n--- ここまで ---`
     : ''
 
-  // Fetch recent conversation history (last 10 messages)
-  const { data: history } = await supabase
+  // 直近10件（古い順）。asc + limit だけだと会話の「最初の10件」になり、新しい質問がGPTに届かない
+  const { data: recentHistory } = await supabase
     .from('messages')
     .select('role, content')
     .eq('conversation_id', convId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(10)
+
+  const history = [...(recentHistory || [])].reverse()
 
   const chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     { role: 'system', content: systemPrompt + contextBlock },
-    ...(history || []).map((m: { role: string; content: string }) => ({
+    ...history.map((m: { role: string; content: string }) => ({
       role: m.role as 'user' | 'assistant',
       content: m.content,
     })),
