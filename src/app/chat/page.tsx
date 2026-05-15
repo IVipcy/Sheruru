@@ -225,7 +225,9 @@ function ChatContent() {
           const msg =
             res.status === 503
               ? '音声は未設定です（Render の ELEVENLABS_API_KEY を確認）'
-              : '音声の生成に失敗しました'
+              : res.status === 404
+                ? 'ボイスが見つかりません。ElevenLabs で削除済みの Voice ID なら、Render の ELEVENLABS_VOICE_ID を空にするか新しい ID に差し替えてください'
+                : '音声の生成に失敗しました'
           setTtsError((errBody as { error?: string }).error || msg)
           end()
           return

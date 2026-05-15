@@ -2,8 +2,10 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'fE4wXeCYHSqKGMJXSr39'
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3'
+/** 未指定時は ElevenLabs 標準のプリセット音声（Rachel）。削除済みのカスタム Voice ID は使えない */
+const ELEVENLABS_VOICE_ID =
+  process.env.ELEVENLABS_VOICE_ID?.trim() || '21m00Tcm4TlvDq8ikWAM'
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -51,7 +53,15 @@ export async function POST(req: NextRequest) {
   if (!response.ok) {
     const err = await response.text()
     console.error('ElevenLabs error:', err)
-    return new Response(JSON.stringify({ error: 'TTS generation failed' }), { status: 500 })
+    const voiceMissing =
+      response.status === 404 ||
+      /voice_not_found|does not exist|invalid.*voice/i.test(err)
+    const message = voiceMissing
+      ? 'Voice ID が無効です（削除済みの可能性）。ElevenLabs で別のボイスを選び直すか、ELEVENLABS_VOICE_ID を空にしてプリセット音声を使ってください'
+      : 'TTS generation failed'
+    return new Response(JSON.stringify({ error: message }), {
+      status: voiceMissing ? 404 : 500,
+    })
   }
 
   const audioBuffer = await response.arrayBuffer()
