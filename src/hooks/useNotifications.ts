@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { Notification } from '@/types/database'
+import type { RealtimePostgresInsertPayload } from '@supabase/supabase-js'
 
 export function useNotifications(userId: string | undefined) {
   const [notifications, setNotifications] = useState<Notification[]>([])
@@ -41,8 +42,8 @@ export function useNotifications(userId: string | undefined) {
           table: 'notifications',
           filter: `user_id=eq.${userId}`,
         },
-        (payload) => {
-          const newNotif = payload.new as Notification
+        (payload: RealtimePostgresInsertPayload<Notification>) => {
+          const newNotif = payload.new
           setNotifications((prev) => [newNotif, ...prev])
           setUnreadCount((prev) => prev + 1)
         }
