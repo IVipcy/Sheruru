@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Bell, LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { APP_NAME } from '@/lib/constants'
 
 const NAV_ITEMS = [
   { href: '/', label: 'モード選択' },
@@ -51,12 +52,15 @@ export default function Header({
 
   return (
     <header className="z-50 flex-shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur-sm">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
-        <Link href="/" className="text-xl font-bold tracking-wider text-[var(--color-accent)]">
-          GYAOSUU
+      <div className="flex h-14 w-full items-center gap-4 pl-3 pr-4 sm:pl-4 sm:pr-6">
+        <Link
+          href="/"
+          className="shrink-0 text-xl font-bold tracking-wider text-[var(--color-accent)]"
+        >
+          {APP_NAME}
         </Link>
 
-        <nav className="flex gap-1">
+        <nav className="ml-6 flex gap-1 sm:ml-12 md:ml-20 lg:ml-28">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
             return (
@@ -75,7 +79,7 @@ export default function Header({
           })}
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           <div className="relative">
             <button
               onClick={() => setShowNotif(!showNotif)}

@@ -1,4 +1,7 @@
-export const APP_NAME = 'GYAOSUU'
+export const APP_NAME = 'Sheruru'
+
+/** アシスタント吹き出し横のアイコン */
+export const AVATAR_ICON_PATH = '/avatar-icon.png'
 
 export const MODES = [
   { id: 'qa' as const, label: 'QAモード', description: '商品・サービス知識に関するQ&A', icon: '💡', color: 'bg-blue-500' },

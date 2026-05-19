@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import Live2DAvatar from '@/components/Live2DAvatar'
 import { useAuth } from '@/hooks/useAuth'
 import { SUGGESTIONS_BY_MODE, SuggestionNode } from '@/lib/suggestions'
+import { APP_NAME, AVATAR_ICON_PATH } from '@/lib/constants'
 import Image from 'next/image'
 import { Send, ThumbsUp, AlertCircle, Mic, Volume2, VolumeX, ChevronLeft, RotateCcw } from 'lucide-react'
 
@@ -38,7 +39,7 @@ function ChatContent() {
   const [showSuggestions, setShowSuggestions] = useState(true)
   const [suggestionPath, setSuggestionPath] = useState<SuggestionNode[][]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
-  const [currentEmotion, setCurrentEmotion] = useState('start')
+  const [currentEmotion, setCurrentEmotion] = useState('neutral')
   const [isTalking, setIsTalking] = useState(false)
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [lastUserMessage, setLastUserMessage] = useState('')
@@ -359,6 +360,23 @@ function ChatContent() {
       const decoder = new TextDecoder()
       let aiContent = ''
       let serverMsgId = ''
+      let ttsStarted = false
+      let ttsPromise: Promise<void> | null = null
+
+      const stripTtsText = (raw: string) =>
+        raw.replace(/\[\[(?:選択肢|次の質問):.+?\]\]/g, '').trim()
+
+      const tryStartEarlyTts = (content: string) => {
+        if (!audioEnabled || ttsStarted) return
+        const ttsContent = stripTtsText(content)
+        if (ttsContent.length < 60) return
+        const lastPeriod = ttsContent.lastIndexOf('。')
+        if (lastPeriod < 20) return
+        const early = ttsContent.slice(0, lastPeriod + 1).trim()
+        if (early.length < 20) return
+        ttsStarted = true
+        ttsPromise = playTTS(early)
+      }
 
       const aiMsgId = (Date.now() + 1).toString()
       setMessages((prev) => [...prev, {
@@ -388,6 +406,7 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
+              tryStartEarlyTts(aiContent)
             } else if (event.type === 'done') {
               serverMsgId = event.messageId
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
@@ -399,9 +418,12 @@ function ChatContent() {
         }
       }
 
-      if (audioEnabled && aiContent) {
-        const ttsContent = aiContent.replace(/\[\[(?:選択肢|次の質問):.+?\]\]/, '').trim()
-        if (ttsContent) await playTTS(ttsContent)
+      const ttsContent = stripTtsText(aiContent)
+      if (audioEnabled && ttsContent) {
+        if (!ttsStarted) {
+          ttsPromise = playTTS(ttsContent)
+        }
+        if (ttsPromise) await ttsPromise
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -544,7 +566,7 @@ function ChatContent() {
             isTalking={isTalking}
             className="h-[80%] w-full max-w-[500px] rounded-2xl"
           />
-          <p className="mt-3 text-xs text-[var(--color-text-muted)]">GYAOSUU</p>
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">{APP_NAME}</p>
         </div>
 
         {/* Chat Area */}
@@ -575,7 +597,7 @@ function ChatContent() {
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
-                    <Image src="/avatar-icon.png" alt="GYAOSUU" width={32} height={32} className="mt-1 flex-shrink-0 rounded-full" />
+                    <Image src={AVATAR_ICON_PATH} alt={APP_NAME} width={32} height={32} className="mt-1 flex-shrink-0 rounded-full object-cover" />
                   )}
                   <div className={`max-w-[75%] rounded-2xl px-4 py-3 ${
                     msg.role === 'user'

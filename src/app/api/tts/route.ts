@@ -5,7 +5,8 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 /** 未指定時は ElevenLabs 標準のプリセット音声（Rachel）。削除済みのカスタム Voice ID は使えない */
 const ELEVENLABS_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID?.trim() || '21m00Tcm4TlvDq8ikWAM'
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2'
+/** turbo は multilingual_v2 より生成が速い（体感レイテンシ短縮） */
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         text: ttsText,
         model_id: ELEVENLABS_MODEL_ID,
+        optimize_streaming_latency: 3,
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,

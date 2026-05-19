@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { APP_NAME } from '@/lib/constants'
 
 // Supabaseはemail形式が必須なので、社員IDを内部的にダミーメールに変換
 const toInternalEmail = (employeeId: string) => `${employeeId}@gyaosuu.internal`
@@ -69,7 +70,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)]">
       <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-lg">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">GYAOSUU</h1>
+          <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">{APP_NAME}</h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">営業力強化AIアバター</p>
         </div>
 
@@ -155,7 +156,7 @@ export default function LoginPage() {
                       <span className="text-xs text-[var(--color-text-muted)]">連絡先（管理者）</span>
                       <br />
                       <a
-                        href={`mailto:${adminContactEmail}?subject=${encodeURIComponent('GYAOSUU パスワード再設定の依頼')}&body=${encodeURIComponent('社員ID: \n')}`}
+                        href={`mailto:${adminContactEmail}?subject=${encodeURIComponent(`${APP_NAME} パスワード再設定の依頼`)}&body=${encodeURIComponent('社員ID: \n')}`}
                         className="break-all font-medium text-[var(--color-accent)] hover:underline"
                       >
                         {adminContactEmail}

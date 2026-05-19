@@ -54,10 +54,18 @@ export default function Live2DAvatar({
     }
   }, [])
 
+  // Unity 初期化直後は感情コントローラが未準備のことがあるため、neutral を再送する
   useEffect(() => {
-    if (isLoaded) {
-      sendToUnity('start', false)
-    }
+    if (!isLoaded) return
+
+    const applyIdleNeutral = () => sendToUnity('neutral', false)
+    applyIdleNeutral()
+
+    const retries = [400, 1200, 2500].map((ms) =>
+      window.setTimeout(applyIdleNeutral, ms)
+    )
+
+    return () => retries.forEach((id) => window.clearTimeout(id))
   }, [isLoaded, sendToUnity])
 
   return (

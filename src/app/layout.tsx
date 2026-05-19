@@ -1,8 +1,9 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { APP_NAME } from '@/lib/constants'
 
 export const metadata: Metadata = {
-  title: 'GYAOSUU - 営業力強化AIアバター',
+  title: `${APP_NAME} - 営業力強化AIアバター`,
   description: 'みずほリース / エムエルITADソリューション 営業力強化AIアバターシステム',
 }
 
