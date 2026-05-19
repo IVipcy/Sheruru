@@ -8,23 +8,7 @@ interface Live2DAvatarProps {
   className?: string
 }
 
-/** 新モデルが Unity に組み込めたら true にしてプレースホルダーを解除 */
-const AVATAR_MODEL_READY = false
-
-function AvatarPlaceholder({ className }: { className: string }) {
-  return (
-    <div
-      className={`relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-light)] ${className}`}
-    >
-      <p className="text-xl font-semibold tracking-wide text-[var(--color-text)]">作成中</p>
-      <p className="mt-2 max-w-[14rem] px-4 text-center text-xs leading-relaxed text-[var(--color-text-muted)]">
-        アバターはモデリング中です。公開までしばらくお待ちください。
-      </p>
-    </div>
-  )
-}
-
-function Live2DUnityEmbed({
+export default function Live2DAvatar({
   emotion = 'neutral',
   isTalking = false,
   className = '',
@@ -95,11 +79,4 @@ function Live2DUnityEmbed({
       )}
     </div>
   )
-}
-
-export default function Live2DAvatar(props: Live2DAvatarProps) {
-  if (!AVATAR_MODEL_READY) {
-    return <AvatarPlaceholder className={props.className ?? ''} />
-  }
-  return <Live2DUnityEmbed {...props} />
 }
