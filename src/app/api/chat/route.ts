@@ -124,7 +124,11 @@ ${context}
         }
       }
 
-      // Save assistant message
+      // テキスト表示完了を先に通知（DB保存待ちで TTS 開始が遅れないようにする）
+      controller.enqueue(encoder.encode(
+        `data: ${JSON.stringify({ type: 'done' })}\n\n`
+      ))
+
       const { data: savedMsg } = await supabase.from('messages').insert({
         conversation_id: convId,
         role: 'assistant',
@@ -132,16 +136,16 @@ ${context}
         emotion,
       }).select('id').single()
 
-      // Update conversation message count
-      await supabase
+      void supabase
         .from('conversations')
         .update({ message_count: (history?.length || 0) + 2 })
         .eq('id', convId)
 
-      // Send done event
-      controller.enqueue(encoder.encode(
-        `data: ${JSON.stringify({ type: 'done', messageId: savedMsg?.id })}\n\n`
-      ))
+      if (savedMsg?.id) {
+        controller.enqueue(encoder.encode(
+          `data: ${JSON.stringify({ type: 'saved', messageId: savedMsg.id })}\n\n`
+        ))
+      }
       controller.close()
     },
   })

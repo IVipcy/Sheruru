@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const ttsText = text.slice(0, 2000)
 
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream`,
     {
       method: 'POST',
       headers: {
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         text: ttsText,
         model_id: ELEVENLABS_MODEL_ID,
-        optimize_streaming_latency: 3,
+        optimize_streaming_latency: 4,
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,
@@ -66,9 +66,11 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const audioBuffer = await response.arrayBuffer()
+  if (!response.body) {
+    return new Response(JSON.stringify({ error: 'TTS stream empty' }), { status: 500 })
+  }
 
-  return new Response(audioBuffer, {
+  return new Response(response.body, {
     headers: {
       'Content-Type': 'audio/mpeg',
       'Cache-Control': 'no-cache',

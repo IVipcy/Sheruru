@@ -27,6 +27,40 @@ function stripSpeechText(raw: string): string {
     .trim()
 }
 
+function prepareTtsText(text: string): string {
+  let ttsText = stripSpeechText(text)
+  if (ttsText.length > 2000) {
+    const cutoff = ttsText.slice(0, 2000).lastIndexOf('。')
+    ttsText = cutoff > 100 ? ttsText.slice(0, cutoff + 1) : ttsText.slice(0, 2000)
+  }
+  return ttsText
+}
+
+/** 文単位で TTS を分割（先頭セグメントだけ先に生成して再生開始を早める） */
+function splitTtsSegments(text: string): string[] {
+  const trimmed = prepareTtsText(text)
+  if (!trimmed) return []
+  const raw = trimmed.split(/(?<=[。！？\n])/).map((s) => s.trim()).filter(Boolean)
+  if (raw.length === 0) return [trimmed]
+  const merged: string[] = []
+  for (const part of raw) {
+    if (merged.length > 0 && merged[merged.length - 1].length < 12) {
+      merged[merged.length - 1] += part
+    } else {
+      merged.push(part)
+    }
+  }
+  return merged
+}
+
+function getFirstCompleteTtsSegment(text: string): string | null {
+  const segments = splitTtsSegments(text)
+  const first = segments[0]
+  if (!first || first.length < 6) return null
+  if (!/[。！？\n]$/.test(first)) return null
+  return first
+}
+
 /** 日本語読み上げのおおよその長さ（ミュート時の口パク用） */
 function estimateSpeechDurationMs(text: string): number {
   if (!text) return 0
@@ -69,8 +103,18 @@ function ChatContent() {
   const conversationIdRef = useRef<string | null>(null)
   const audioUnlockedRef = useRef(false)
   const mutedMotionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const ttsPrefetchRef = useRef<{
+    segment: string
+    promise: Promise<Blob>
+    abort: AbortController
+  } | null>(null)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
+
+  const clearTtsPrefetch = useCallback(() => {
+    ttsPrefetchRef.current?.abort.abort()
+    ttsPrefetchRef.current = null
+  }, [])
 
   const getUserBadgeIcon = useCallback(() => {
     if (profile?.selected_badge === 'sherpa' && profile?.is_sherpa) {
@@ -202,13 +246,54 @@ function ChatContent() {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
     }
+    clearTtsPrefetch()
     disposeTts()
     clearMutedMotion()
     setIsTalking(false)
     setIsPlayingAudio(false)
     setCurrentEmotion('neutral')
     setIsTyping(false)
-  }, [disposeTts, clearMutedMotion])
+  }, [disposeTts, clearMutedMotion, clearTtsPrefetch])
+
+  const fetchTtsBlob = useCallback(async (text: string, signal: AbortSignal): Promise<Blob> => {
+    const ttsText = prepareTtsText(text)
+    if (!ttsText) throw new Error('empty tts')
+
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: ttsText }),
+      signal,
+    })
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}))
+      const msg =
+        res.status === 503
+          ? '音声は未設定です（Render の ELEVENLABS_API_KEY を確認）'
+          : res.status === 404
+            ? 'ボイスが見つかりません。ElevenLabs で削除済みの Voice ID なら、Render の ELEVENLABS_VOICE_ID を空にするか新しい ID に差し替えてください'
+            : '音声の生成に失敗しました'
+      throw new Error((errBody as { error?: string }).error || msg)
+    }
+
+    return res.blob()
+  }, [])
+
+  const tryPrefetchFirstTtsSegment = useCallback(
+    (content: string) => {
+      if (!audioEnabled || ttsPrefetchRef.current) return
+      const segment = getFirstCompleteTtsSegment(content)
+      if (!segment) return
+      const abort = new AbortController()
+      ttsPrefetchRef.current = {
+        segment,
+        promise: fetchTtsBlob(segment, abort.signal),
+        abort,
+      }
+    },
+    [audioEnabled, fetchTtsBlob]
+  )
 
   const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
     clearMutedMotion()
@@ -229,149 +314,149 @@ function ChatContent() {
     })
   }, [clearMutedMotion])
 
-  const playTTS = useCallback((text: string): Promise<void> => {
-    clearMutedMotion()
-    disposeTts()
-    setTtsError(null)
-    const ac = new AbortController()
-    ttsFetchAbortRef.current = ac
-    const signal = ac.signal
-
-    const finish = () => {
-      if (ttsFetchAbortRef.current === ac) {
-        ttsFetchAbortRef.current = null
-      }
-    }
-
-    return new Promise(async (resolve) => {
-      const end = () => {
-        finish()
-        resolve()
-      }
-
-      try {
-        let ttsText = stripSpeechText(text)
-        if (ttsText.length > 2000) {
-          const cutoff = ttsText.slice(0, 2000).lastIndexOf('。')
-          ttsText = cutoff > 100 ? ttsText.slice(0, cutoff + 1) : ttsText.slice(0, 2000)
-        }
-
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: ttsText }),
-          signal,
-        })
-
-        if (signal.aborted) {
-          end()
-          return
-        }
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}))
-          const msg =
-            res.status === 503
-              ? '音声は未設定です（Render の ELEVENLABS_API_KEY を確認）'
-              : res.status === 404
-                ? 'ボイスが見つかりません。ElevenLabs で削除済みの Voice ID なら、Render の ELEVENLABS_VOICE_ID を空にするか新しい ID に差し替えてください'
-                : '音声の生成に失敗しました'
-          setTtsError((errBody as { error?: string }).error || msg)
-          end()
-          return
-        }
-
-        const audioBlob = await res.blob()
-        if (signal.aborted) {
-          end()
-          return
-        }
-
+  const playAudioBlob = useCallback(
+    (audioBlob: Blob, signal: AbortSignal, fallbackText: string): Promise<'ok' | 'blocked' | 'error'> =>
+      new Promise((resolve) => {
         const audioUrl = URL.createObjectURL(audioBlob)
         currentTtsObjectUrlRef.current = audioUrl
-
         const audio = new Audio(audioUrl)
         audioRef.current = audio
 
-        audio.onplay = () => {
-          if (signal.aborted) return
-          setTtsError(null)
-          setPendingTtsText(null)
-          setIsTalking(true)
-          setIsPlayingAudio(true)
-          setCurrentEmotion('neutraltalking')
+        const cleanup = () => {
+          URL.revokeObjectURL(audioUrl)
+          if (currentTtsObjectUrlRef.current === audioUrl) {
+            currentTtsObjectUrlRef.current = null
+          }
+          if (audioRef.current === audio) {
+            audioRef.current = null
+          }
         }
 
         audio.onended = () => {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
-          }
-          if (!signal.aborted) {
-            setIsTalking(false)
-            setIsPlayingAudio(false)
-            setCurrentEmotion('neutral')
-          }
-          end()
+          cleanup()
+          resolve('ok')
         }
 
         audio.onerror = () => {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
+          cleanup()
+          if (!signal.aborted) {
+            setTtsError('音声の再生に失敗しました')
           }
+          resolve('error')
+        }
+
+        if (signal.aborted) {
+          cleanup()
+          resolve('error')
+          return
+        }
+
+        setTtsError(null)
+        setPendingTtsText(null)
+
+        audio
+          .play()
+          .then(() => {
+            if (signal.aborted) {
+              audio.pause()
+              cleanup()
+              resolve('error')
+            }
+          })
+          .catch((playErr) => {
+            cleanup()
+            if (
+              playErr instanceof DOMException &&
+              (playErr.name === 'NotAllowedError' || playErr.name === 'AbortError')
+            ) {
+              setPendingTtsText(fallbackText)
+              setTtsError('タップして音声を再生')
+              resolve('blocked')
+              return
+            }
+            if (!signal.aborted) {
+              setTtsError('音声の再生に失敗しました')
+            }
+            resolve('error')
+          })
+      }),
+    []
+  )
+
+  const playTTS = useCallback(
+    (text: string): Promise<void> => {
+      clearMutedMotion()
+      disposeTts()
+      setTtsError(null)
+      setPendingTtsText(null)
+
+      const prefetched = ttsPrefetchRef.current
+      ttsPrefetchRef.current = null
+
+      const ac = new AbortController()
+      ttsFetchAbortRef.current = ac
+      const signal = ac.signal
+
+      const finish = () => {
+        if (ttsFetchAbortRef.current === ac) {
+          ttsFetchAbortRef.current = null
+        }
+      }
+
+      const segments = splitTtsSegments(text)
+      if (segments.length === 0) {
+        finish()
+        return Promise.resolve()
+      }
+
+      // TTS 生成待ちの間も口パクを開始（体感ラグ短縮）
+      setIsTalking(true)
+      setIsPlayingAudio(true)
+      setCurrentEmotion('neutraltalking')
+
+      return (async () => {
+        try {
+          for (let i = 0; i < segments.length; i++) {
+            if (signal.aborted) break
+            const segment = segments[i]
+            let blob: Blob
+            if (i === 0 && prefetched?.segment === segment) {
+              try {
+                blob = await prefetched.promise
+              } catch {
+                blob = await fetchTtsBlob(segment, signal)
+              }
+            } else {
+              blob = await fetchTtsBlob(segment, signal)
+            }
+            if (signal.aborted) break
+            const played = await playAudioBlob(blob, signal, text)
+            if (played !== 'ok') break
+          }
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') {
+            disposeTts()
+          } else if (!signal.aborted) {
+            setTtsError(err instanceof Error ? err.message : '音声の再生に失敗しました')
+          }
+        } finally {
           if (!signal.aborted) {
             setIsTalking(false)
             setIsPlayingAudio(false)
             setCurrentEmotion('neutral')
-            setTtsError('音声の再生に失敗しました')
           }
-          end()
+          finish()
         }
-
-        if (signal.aborted) {
-          URL.revokeObjectURL(audioUrl)
-          if (currentTtsObjectUrlRef.current === audioUrl) {
-            currentTtsObjectUrlRef.current = null
-          }
-          audioRef.current = null
-          end()
-          return
-        }
-
-        try {
-          await audio.play()
-        } catch (playErr) {
-          if (
-            playErr instanceof DOMException &&
-            (playErr.name === 'NotAllowedError' || playErr.name === 'AbortError')
-          ) {
-            setPendingTtsText(text)
-            setTtsError('タップして音声を再生')
-            end()
-            return
-          }
-          throw playErr
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          disposeTts()
-          end()
-          return
-        }
-        disposeTts()
-        setIsTalking(false)
-        setIsPlayingAudio(false)
-        setCurrentEmotion('neutral')
-        setTtsError('音声の再生に失敗しました')
-        end()
-      }
-    })
-  }, [disposeTts])
+      })()
+    },
+    [clearMutedMotion, disposeTts, fetchTtsBlob, playAudioBlob]
+  )
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return
 
     unlockAudioPlayback()
+    clearTtsPrefetch()
 
     if (isTyping) {
       cancelCurrentResponse()
@@ -416,6 +501,8 @@ function ChatContent() {
         actionTaken: null,
       }])
 
+      let ttsPromise: Promise<void> | null = null
+
       while (reader) {
         const { done, value } = await reader.read()
         if (done) break
@@ -430,29 +517,42 @@ function ChatContent() {
             const event = JSON.parse(json)
             if (event.type === 'meta') {
               setConversationId(event.conversationId)
+              if (event.emotion) {
+                setCurrentEmotion(event.emotion)
+              }
             } else if (event.type === 'token') {
               aiContent += event.content
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
+              tryPrefetchFirstTtsSegment(aiContent)
             } else if (event.type === 'done') {
-              serverMsgId = event.messageId
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
-                prev.map((m) => m.id === aiMsgId ? { ...m, showActions: !isDrillDown, serverMsgId } : m)
+                prev.map((m) =>
+                  m.id === aiMsgId
+                    ? { ...m, showActions: !isDrillDown, serverMsgId: serverMsgId || undefined }
+                    : m
+                )
+              )
+              const ttsContent = prepareTtsText(aiContent)
+              if (ttsContent) {
+                ttsPromise = audioEnabled
+                  ? playTTS(ttsContent)
+                  : playMutedTalkingMotion(ttsContent)
+              }
+            } else if (event.type === 'saved' && event.messageId) {
+              serverMsgId = event.messageId
+              setMessages((prev) =>
+                prev.map((m) => (m.id === aiMsgId ? { ...m, serverMsgId } : m))
               )
             }
           } catch { /* skip invalid JSON */ }
         }
       }
 
-      const ttsContent = stripSpeechText(aiContent)
-      if (ttsContent) {
-        if (audioEnabled) {
-          await playTTS(ttsContent)
-        } else {
-          await playMutedTalkingMotion(ttsContent)
-        }
+      if (ttsPromise) {
+        await ttsPromise
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -468,7 +568,17 @@ function ChatContent() {
       setIsTyping(false)
       resetSuggestions()
     }
-  }, [isTyping, mode, cancelCurrentResponse, audioEnabled, playTTS, playMutedTalkingMotion, unlockAudioPlayback])
+  }, [
+    isTyping,
+    mode,
+    cancelCurrentResponse,
+    audioEnabled,
+    playTTS,
+    playMutedTalkingMotion,
+    unlockAudioPlayback,
+    clearTtsPrefetch,
+    tryPrefetchFirstTtsSegment,
+  ])
 
   const toggleRecording = useCallback(() => {
     unlockAudioPlayback()
@@ -589,7 +699,7 @@ function ChatContent() {
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Live2D Avatar Area */}
-        <div className="hidden min-h-0 min-w-0 flex-1 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex">
+        <div className="hidden min-h-0 w-full flex-shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex lg:w-2/5 lg:max-w-md">
           <div className="relative min-h-0 flex-1 p-2 sm:p-3">
             <Live2DAvatar
               emotion={currentEmotion}
@@ -601,7 +711,7 @@ function ChatContent() {
         </div>
 
         {/* Chat Area */}
-        <div className="flex w-full flex-shrink-0 flex-col lg:w-1/2 lg:max-w-2xl">
+        <div className="flex min-w-0 flex-1 flex-col">
           {/* Mode indicator */}
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
             <span className={`text-sm font-semibold ${modeInfo.color}`}>● {modeInfo.label}</span>
@@ -624,7 +734,7 @@ function ChatContent() {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            <div className="mx-auto max-w-2xl space-y-4">
+            <div className="mx-auto w-full max-w-5xl space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
@@ -707,7 +817,7 @@ function ChatContent() {
           {/* Hierarchical Suggestions */}
           {showSuggestions && (
             <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
-              <div className="mx-auto max-w-2xl">
+              <div className="mx-auto w-full max-w-5xl px-6">
                 {suggestionPath.length > 0 && (
                   <button
                     onClick={() => setSuggestionPath((prev) => prev.slice(0, -1))}
@@ -737,7 +847,7 @@ function ChatContent() {
 
           {ttsError && (
             <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-2">
-              <div className="mx-auto flex max-w-2xl items-center justify-between gap-2">
+              <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2">
                 <p className="text-xs text-orange-600">{ttsError}</p>
                 {pendingTtsText && audioEnabled && (
                   <button
@@ -757,7 +867,7 @@ function ChatContent() {
 
           {/* Input */}
           <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-4">
-            <div className="mx-auto flex max-w-2xl items-center gap-3">
+            <div className="mx-auto flex w-full max-w-5xl items-center gap-3">
               <button
                 onClick={toggleRecording}
                 className={`rounded-lg p-2 transition-colors ${
