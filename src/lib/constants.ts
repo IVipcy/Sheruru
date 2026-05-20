@@ -1,7 +1,10 @@
 export const APP_NAME = 'Sheruru'
 
-/** ヘッダー・favicon 用ロゴ */
+/** ヘッダー用ロゴ */
 export const APP_LOGO_PATH = '/sheruru-logo.png'
+
+/** ブラウザタブ用 favicon（足跡アイコン） */
+export const FAVICON_PATH = '/favicon.png'
 
 /** アシスタント吹き出し横のアイコン */
 export const AVATAR_ICON_PATH = '/avatar-icon.png'
