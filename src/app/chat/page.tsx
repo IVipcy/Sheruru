@@ -19,6 +19,21 @@ type MessageType = {
   actionTaken?: 'good' | 'unsolved' | null
 }
 
+function stripSpeechText(raw: string): string {
+  return raw
+    .replace(/\[\[(?:選択肢|次の質問):.+?\]\]/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .trim()
+}
+
+/** 日本語読み上げのおおよその長さ（ミュート時の口パク用） */
+function estimateSpeechDurationMs(text: string): number {
+  if (!text) return 0
+  const ms = Math.round(text.length * 85)
+  return Math.min(45_000, Math.max(2_000, ms))
+}
+
 const MODE_INFO: Record<string, { label: string; color: string }> = {
   qa: { label: 'QAモード', color: 'text-blue-500' },
   consultation: { label: '案件相談', color: 'text-emerald-500' },
@@ -32,7 +47,7 @@ function ChatContent() {
   const { profile, signOut } = useAuth()
 
   const [messages, setMessages] = useState<MessageType[]>([
-    { id: '1', role: 'assistant', content: 'どんな悩みがあるのかな？\nなんでも答えるよ？', showActions: false, actionTaken: null },
+    { id: '1', role: 'assistant', content: 'どんなことで困っとる？\nなんでも聞いてな、ええから！', showActions: false, actionTaken: null },
   ])
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
@@ -53,6 +68,7 @@ function ChatContent() {
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const conversationIdRef = useRef<string | null>(null)
   const audioUnlockedRef = useRef(false)
+  const mutedMotionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
 
@@ -108,6 +124,13 @@ function ChatContent() {
     }
   }, [])
 
+  const clearMutedMotion = useCallback(() => {
+    if (mutedMotionTimerRef.current) {
+      clearTimeout(mutedMotionTimerRef.current)
+      mutedMotionTimerRef.current = null
+    }
+  }, [])
+
   // Stop streaming + TTS when leaving the chat page (otherwise audio keeps playing)
   useEffect(() => {
     return () => {
@@ -116,8 +139,9 @@ function ChatContent() {
         abortControllerRef.current = null
       }
       disposeTts()
+      clearMutedMotion()
     }
-  }, [disposeTts])
+  }, [disposeTts, clearMutedMotion])
 
   // Restore previous conversation on mount
   useEffect(() => {
@@ -179,12 +203,34 @@ function ChatContent() {
       abortControllerRef.current = null
     }
     disposeTts()
+    clearMutedMotion()
     setIsTalking(false)
     setIsPlayingAudio(false)
+    setCurrentEmotion('neutral')
     setIsTyping(false)
-  }, [disposeTts])
+  }, [disposeTts, clearMutedMotion])
+
+  const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
+    clearMutedMotion()
+    const duration = estimateSpeechDurationMs(text)
+    if (duration <= 0) return Promise.resolve()
+
+    return new Promise((resolve) => {
+      setIsTalking(true)
+      setIsPlayingAudio(false)
+      setCurrentEmotion('neutraltalking')
+
+      mutedMotionTimerRef.current = setTimeout(() => {
+        mutedMotionTimerRef.current = null
+        setIsTalking(false)
+        setCurrentEmotion('neutral')
+        resolve()
+      }, duration)
+    })
+  }, [clearMutedMotion])
 
   const playTTS = useCallback((text: string): Promise<void> => {
+    clearMutedMotion()
     disposeTts()
     setTtsError(null)
     const ac = new AbortController()
@@ -204,10 +250,10 @@ function ChatContent() {
       }
 
       try {
-        let ttsText = text
-        if (text.length > 2000) {
-          const cutoff = text.slice(0, 2000).lastIndexOf('。')
-          ttsText = cutoff > 100 ? text.slice(0, cutoff + 1) : text.slice(0, 2000)
+        let ttsText = stripSpeechText(text)
+        if (ttsText.length > 2000) {
+          const cutoff = ttsText.slice(0, 2000).lastIndexOf('。')
+          ttsText = cutoff > 100 ? ttsText.slice(0, cutoff + 1) : ttsText.slice(0, 2000)
         }
 
         const res = await fetch('/api/tts', {
@@ -360,23 +406,6 @@ function ChatContent() {
       const decoder = new TextDecoder()
       let aiContent = ''
       let serverMsgId = ''
-      let ttsStarted = false
-      let ttsPromise: Promise<void> | null = null
-
-      const stripTtsText = (raw: string) =>
-        raw.replace(/\[\[(?:選択肢|次の質問):.+?\]\]/g, '').trim()
-
-      const tryStartEarlyTts = (content: string) => {
-        if (!audioEnabled || ttsStarted) return
-        const ttsContent = stripTtsText(content)
-        if (ttsContent.length < 60) return
-        const lastPeriod = ttsContent.lastIndexOf('。')
-        if (lastPeriod < 20) return
-        const early = ttsContent.slice(0, lastPeriod + 1).trim()
-        if (early.length < 20) return
-        ttsStarted = true
-        ttsPromise = playTTS(early)
-      }
 
       const aiMsgId = (Date.now() + 1).toString()
       setMessages((prev) => [...prev, {
@@ -406,7 +435,6 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
-              tryStartEarlyTts(aiContent)
             } else if (event.type === 'done') {
               serverMsgId = event.messageId
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
@@ -418,12 +446,13 @@ function ChatContent() {
         }
       }
 
-      const ttsContent = stripTtsText(aiContent)
-      if (audioEnabled && ttsContent) {
-        if (!ttsStarted) {
-          ttsPromise = playTTS(ttsContent)
+      const ttsContent = stripSpeechText(aiContent)
+      if (ttsContent) {
+        if (audioEnabled) {
+          await playTTS(ttsContent)
+        } else {
+          await playMutedTalkingMotion(ttsContent)
         }
-        if (ttsPromise) await ttsPromise
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -439,7 +468,7 @@ function ChatContent() {
       setIsTyping(false)
       resetSuggestions()
     }
-  }, [isTyping, mode, cancelCurrentResponse, audioEnabled, playTTS, unlockAudioPlayback])
+  }, [isTyping, mode, cancelCurrentResponse, audioEnabled, playTTS, playMutedTalkingMotion, unlockAudioPlayback])
 
   const toggleRecording = useCallback(() => {
     unlockAudioPlayback()
@@ -577,7 +606,7 @@ function ChatContent() {
             <button
               onClick={() => {
                 cancelCurrentResponse()
-                setMessages([{ id: '1', role: 'assistant', content: 'どんな悩みがあるのかな？\nなんでも答えるよ？', showActions: false, actionTaken: null }])
+                setMessages([{ id: '1', role: 'assistant', content: 'どんなことで困っとる？\nなんでも聞いてな、ええから！', showActions: false, actionTaken: null }])
                 setConversationId(null)
                 conversationIdRef.current = null
                 setTtsError(null)

@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { APP_NAME } from '@/lib/constants'
+import Image from 'next/image'
+import { APP_NAME, APP_LOGO_PATH } from '@/lib/constants'
 
 // Supabaseはemail形式が必須なので、社員IDを内部的にダミーメールに変換
 const toInternalEmail = (employeeId: string) => `${employeeId}@gyaosuu.internal`
@@ -70,7 +71,17 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)]">
       <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-lg">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">{APP_NAME}</h1>
+          <div className="flex items-center justify-center gap-3">
+            <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">{APP_NAME}</h1>
+            <Image
+              src={APP_LOGO_PATH}
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 object-contain"
+              priority
+            />
+          </div>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">営業力強化AIアバター</p>
         </div>
 

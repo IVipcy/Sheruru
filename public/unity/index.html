@@ -197,6 +197,24 @@
             }
           };
           
+          function sendEmotionToBridge(emotion, talking) {
+            if (!unityInstance) return;
+            try {
+              var payload = JSON.stringify({ type: 'emotion', emotion: emotion, talking: !!talking });
+              unityInstance.SendMessage('WebGLBridge', 'OnMessage', payload);
+              console.log("Idle emotion sent:", emotion, talking);
+            } catch (error) {
+              console.error("Failed to send idle emotion:", error);
+            }
+          }
+
+          // Live2D 初期化完了まで遅れるため、iframe 内から neutral を複数回送る
+          [1200, 2800, 5000, 8000].forEach(function(ms) {
+            setTimeout(function() { sendEmotionToBridge('neutral', false); }, ms);
+          });
+          setTimeout(function() { sendEmotionToBridge('start', false); }, 600);
+          setTimeout(function() { sendEmotionToBridge('neutral', false); }, 4500);
+
           if (window.parent !== window) {
             window.parent.postMessage({
               type: 'unity-ready',

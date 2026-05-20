@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Bell, LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { APP_NAME } from '@/lib/constants'
+import { APP_NAME, APP_LOGO_PATH } from '@/lib/constants'
 
 const NAV_ITEMS = [
   { href: '/', label: 'モード選択' },
@@ -55,9 +55,19 @@ export default function Header({
       <div className="flex h-14 w-full items-center gap-4 pl-3 pr-4 sm:pl-4 sm:pr-6">
         <Link
           href="/"
-          className="shrink-0 text-xl font-bold tracking-wider text-[var(--color-accent)]"
+          className="flex shrink-0 items-center gap-2"
         >
-          {APP_NAME}
+          <span className="text-xl font-bold tracking-wider text-[var(--color-accent)]">
+            {APP_NAME}
+          </span>
+          <Image
+            src={APP_LOGO_PATH}
+            alt=""
+            width={32}
+            height={32}
+            className="h-8 w-8 object-contain"
+            priority
+          />
         </Link>
 
         <nav className="ml-6 flex gap-1 sm:ml-12 md:ml-20 lg:ml-28">

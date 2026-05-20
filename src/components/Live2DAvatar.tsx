@@ -54,18 +54,25 @@ export default function Live2DAvatar({
     }
   }, [])
 
-  // Unity 初期化直後は感情コントローラが未準備のことがあるため、neutral を再送する
+  // Live2D の初期化完了は unity-ready より遅れることがあるため、neutral を繰り返し送る
   useEffect(() => {
     if (!isLoaded) return
 
     const applyIdleNeutral = () => sendToUnity('neutral', false)
+    const applyStart = () => sendToUnity('start', false)
+
+    applyStart()
     applyIdleNeutral()
 
-    const retries = [400, 1200, 2500].map((ms) =>
+    const retries = [800, 2000, 4000, 7000, 11000].map((ms) =>
       window.setTimeout(applyIdleNeutral, ms)
     )
+    const startAgain = window.setTimeout(applyStart, 3000)
 
-    return () => retries.forEach((id) => window.clearTimeout(id))
+    return () => {
+      retries.forEach((id) => window.clearTimeout(id))
+      window.clearTimeout(startAgain)
+    }
   }, [isLoaded, sendToUnity])
 
   return (
