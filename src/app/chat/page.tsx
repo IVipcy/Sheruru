@@ -699,7 +699,8 @@ function ChatContent() {
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Live2D Avatar Area */}
-        <div className="hidden min-h-0 w-full flex-shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex lg:w-2/5 lg:max-w-md">
+        {/* lg+: アバター 40% / チャット 60%（flex-basis で固定） */}
+        <div className="hidden min-h-0 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex lg:basis-2/5 lg:grow-0">
           <div className="relative min-h-0 flex-1 p-2 sm:p-3">
             <Live2DAvatar
               emotion={currentEmotion}
@@ -711,7 +712,7 @@ function ChatContent() {
         </div>
 
         {/* Chat Area */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:basis-3/5 lg:grow-0 lg:shrink-0">
           {/* Mode indicator */}
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
             <span className={`text-sm font-semibold ${modeInfo.color}`}>● {modeInfo.label}</span>
