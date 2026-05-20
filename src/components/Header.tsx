@@ -57,9 +57,6 @@ export default function Header({
           href="/"
           className="flex shrink-0 items-center gap-2"
         >
-          <span className="text-xl font-bold tracking-wider text-[var(--color-accent)]">
-            {APP_NAME}
-          </span>
           <Image
             src={APP_LOGO_PATH}
             alt=""
@@ -68,6 +65,9 @@ export default function Header({
             className="h-8 w-8 object-contain"
             priority
           />
+          <span className="text-xl font-bold tracking-wider text-[var(--color-accent)]">
+            {APP_NAME}
+          </span>
         </Link>
 
         <nav className="ml-6 flex gap-1 sm:ml-12 md:ml-20 lg:ml-28">

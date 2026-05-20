@@ -72,7 +72,6 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-lg">
         <div className="mb-8 text-center">
           <div className="flex items-center justify-center gap-3">
-            <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">{APP_NAME}</h1>
             <Image
               src={APP_LOGO_PATH}
               alt=""
@@ -81,6 +80,7 @@ export default function LoginPage() {
               className="h-10 w-10 object-contain"
               priority
             />
+            <h1 className="text-3xl font-bold tracking-wider text-[var(--color-accent)]">{APP_NAME}</h1>
           </div>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">営業力強化AIアバター</p>
         </div>

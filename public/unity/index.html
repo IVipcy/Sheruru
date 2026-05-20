@@ -208,7 +208,6 @@
             }
           }
 
-          // Live2D 初期化完了まで遅れるため、iframe 内から neutral を複数回送る
           [1200, 2800, 5000, 8000].forEach(function(ms) {
             setTimeout(function() { sendEmotionToBridge('neutral', false); }, ms);
           });
