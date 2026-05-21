@@ -86,6 +86,8 @@ function ChatContent() {
     abort: AbortController
   } | null>(null)
   const ttsPrefetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** このセッションで送信済みなら、遅れて返った履歴で messages を上書きしない */
+  const localChatStartedRef = useRef(false)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
 
@@ -169,16 +171,21 @@ function ChatContent() {
     }
   }, [disposeTts, clearMutedMotion])
 
-  // Restore previous conversation on mount
+  // Restore previous conversation on mount (do not overwrite an in-flight chat)
   useEffect(() => {
-    if (!profile) return
+    localChatStartedRef.current = false
+    if (!profile?.id) return
+
+    let cancelled = false
     const loadHistory = async () => {
       try {
         const res = await fetch(`/api/chat/history?mode=${mode}`)
-        if (!res.ok) return
+        if (!res.ok || cancelled) return
         const data = await res.json()
+        if (cancelled || localChatStartedRef.current) return
         if (data.conversationId && data.messages.length > 0) {
           setConversationId(data.conversationId)
+          conversationIdRef.current = data.conversationId
           const restored: MessageType[] = data.messages.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
             role: m.role as 'user' | 'assistant',
@@ -192,7 +199,8 @@ function ChatContent() {
       } catch { /* use default greeting */ }
     }
     loadHistory()
-  }, [mode, profile])
+    return () => { cancelled = true }
+  }, [mode, profile?.id])
 
   const getCurrentSuggestions = (): SuggestionNode[] => {
     const rootSuggestions = SUGGESTIONS_BY_MODE[mode] || []
@@ -468,6 +476,7 @@ function ChatContent() {
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return
 
+    localChatStartedRef.current = true
     unlockAudioPlayback()
     clearTtsPrefetch()
 
@@ -747,6 +756,7 @@ function ChatContent() {
             <button
               onClick={() => {
                 cancelCurrentResponse()
+                localChatStartedRef.current = false
                 setMessages([{ id: '1', role: 'assistant', content: 'どんなことで困っとる？\nなんでも聞いてな、ええから！', showActions: false, actionTaken: null }])
                 setConversationId(null)
                 conversationIdRef.current = null
