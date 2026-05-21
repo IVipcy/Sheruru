@@ -140,9 +140,15 @@ ${context}
         `data: ${JSON.stringify({ type: 'done' })}\n\n`
       ))
 
+      let ttsErrorMessage: string | null = null
       const ttsAudioPromise =
         isTtsConfigured() && ttsKey
-          ? (getInflightTts(ttsKey) ?? ensureTtsInflight(ttsKey)).catch(() => null)
+          ? (getInflightTts(ttsKey) ?? ensureTtsInflight(ttsKey)).catch((err) => {
+              ttsErrorMessage =
+                err instanceof Error ? err.message : 'TTS generation failed'
+              console.error('Chat TTS error:', err)
+              return null
+            })
           : Promise.resolve(null)
 
       const [{ data: savedMsg }, ttsBuffer] = await Promise.all([
@@ -168,6 +174,10 @@ ${context}
         const audioBase64 = Buffer.from(ttsBuffer).toString('base64')
         controller.enqueue(encoder.encode(
           `data: ${JSON.stringify({ type: 'tts', audioBase64 })}\n\n`
+        ))
+      } else if (ttsErrorMessage && isTtsConfigured() && ttsKey) {
+        controller.enqueue(encoder.encode(
+          `data: ${JSON.stringify({ type: 'tts_error', message: ttsErrorMessage })}\n\n`
         ))
       }
 

@@ -561,6 +561,12 @@ function ChatContent() {
                 const blob = base64ToAudioBlob(event.audioBase64)
                 ttsPromise = playTtsBlob(blob, prepareTtsText(aiContent) || aiContent)
               }
+            } else if (event.type === 'tts_error' && typeof event.message === 'string') {
+              awaitingChatTtsEventRef.current = false
+              if (audioEnabled) {
+                setTtsError(event.message)
+                ttsFallbackText = prepareTtsText(aiContent) || null
+              }
             } else if (event.type === 'done') {
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
