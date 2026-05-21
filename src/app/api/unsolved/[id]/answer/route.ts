@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { createServiceRoleClient } from '@/lib/supabase-admin'
+import { sendNotification } from '@/lib/send-notification'
 
 // POST: submit an answer to an unsolved question
 export async function POST(
@@ -61,11 +62,15 @@ export async function POST(
     .single()
 
   if (question && question.user_id !== user.id) {
-    await supabase.from('notifications').insert({
+    const preview =
+      question.question_text.length > 30
+        ? `${question.question_text.slice(0, 30)}…`
+        : question.question_text
+    await sendNotification({
       user_id: question.user_id,
       type: 'answer_posted',
       title: '未解決BOXに回答がつきました',
-      body: `「${question.question_text.slice(0, 30)}...」に回答が投稿されました`,
+      body: `「${preview}」に回答が投稿されました`,
       link: `/unsolved/${questionId}`,
     })
   }

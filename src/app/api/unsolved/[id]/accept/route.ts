@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { openai, EMBEDDING_MODEL } from '@/lib/openai'
+import { sendNotification } from '@/lib/send-notification'
+import { ingestUnsolvedBestAnswer } from '@/lib/ingest-unsolved-knowledge'
 
 // POST: accept an answer as best answer
 export async function POST(
@@ -57,44 +58,40 @@ export async function POST(
     .single()
 
   if (answer && answer.answerer_id !== user.id) {
-    await supabase.from('notifications').insert({
+    await sendNotification({
       user_id: answer.answerer_id,
       type: 'question_resolved',
       title: 'あなたの回答がベストアンサーに選ばれました！',
-      body: '',
+      body: '質問者がベストアンサーに選びました',
       link: `/unsolved/${questionId}`,
     })
   }
 
-  // Auto-learn: embed Q&A and insert into knowledge_vectors
-  try {
-    const { data: fullQuestion } = await supabase
-      .from('unsolved_questions')
-      .select('question_text, mode')
-      .eq('id', questionId)
-      .single()
+  let learned: { ok: boolean; vectorId?: string; error?: string } = { ok: false }
 
-    if (fullQuestion && answer?.answer_text) {
-      const knowledgeContent = `【質問】${fullQuestion.question_text}\n【回答】${answer.answer_text}`
+  const { data: fullQuestion } = await supabase
+    .from('unsolved_questions')
+    .select('question_text, mode')
+    .eq('id', questionId)
+    .single()
 
-      const embeddingRes = await openai.embeddings.create({
-        model: EMBEDDING_MODEL,
-        input: knowledgeContent,
-      })
-
-      await supabase.from('knowledge_vectors').insert({
-        content: knowledgeContent,
-        category: '未解決BOX回答',
-        mode: fullQuestion.mode || 'all',
-        source_file: '未解決BOX（自動学習）',
-        chunk_index: 0,
-        metadata: { question_id: questionId, answer_id: answerId },
-        embedding: embeddingRes.data[0].embedding,
-      })
+  if (fullQuestion && answer?.answer_text) {
+    learned = await ingestUnsolvedBestAnswer({
+      questionId,
+      answerId,
+      questionText: fullQuestion.question_text,
+      answerText: answer.answer_text,
+      mode: fullQuestion.mode || 'qa',
+    })
+    if (!learned.ok) {
+      console.error('Auto-learn failed:', learned.error)
     }
-  } catch (e) {
-    console.error('Auto-learn embedding failed:', e)
   }
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({
+    success: true,
+    learned: learned.ok,
+    learnedVectorId: learned.vectorId ?? null,
+    learnedError: learned.error ?? null,
+  })
 }

@@ -61,10 +61,13 @@ export function useNotifications(userId: string | undefined) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     })
-    setNotifications((prev) =>
-      prev.map((n) => (ids ? (ids.includes(n.id) ? { ...n, is_read: true } : n) : { ...n, is_read: true }))
-    )
-    setUnreadCount(ids ? unreadCount - ids.length : 0)
+    setNotifications((prev) => {
+      const next = prev.map((n) =>
+        ids ? (ids.includes(n.id) ? { ...n, is_read: true } : n) : { ...n, is_read: true }
+      )
+      setUnreadCount(next.filter((n) => !n.is_read).length)
+      return next
+    })
   }
 
   return { notifications, unreadCount, markAsRead, refetch: fetchNotifications }

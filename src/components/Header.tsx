@@ -4,10 +4,13 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { Bell, LogOut, Menu } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { APP_NAME, APP_LOGO_PATH, NAV_ITEMS } from '@/lib/constants'
 import MobileNavDrawer from '@/components/MobileNavDrawer'
+import { useAuth } from '@/hooks/useAuth'
+import { useNotifications } from '@/hooks/useNotifications'
+import type { Notification } from '@/types/database'
 
 const BADGE_IMAGES: Record<number, string> = {
   1: '/badges/good-blue.png',
@@ -20,8 +23,20 @@ interface HeaderProps {
   badgeRank?: number
   isSherpa?: boolean
   selectedBadge?: 'good' | 'sherpa'
-  unreadCount?: number
   onLogout?: () => void
+}
+
+function formatNotifTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('ja-JP', {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return ''
+  }
 }
 
 export default function Header({
@@ -29,13 +44,20 @@ export default function Header({
   badgeRank = 1,
   isSherpa = false,
   selectedBadge = 'good',
-  unreadCount = 0,
   onLogout,
 }: HeaderProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const { user } = useAuth()
+  const { notifications, unreadCount, markAsRead, refetch } = useNotifications(user?.id)
   const [showNotif, setShowNotif] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (showNotif && user?.id) {
+      void refetch()
+    }
+  }, [showNotif, user?.id, refetch])
 
   const handleLogout = async () => {
     if (onLogout) {
@@ -45,6 +67,16 @@ export default function Header({
     const supabase = createClient()
     await supabase.auth.signOut()
     window.location.href = '/login'
+  }
+
+  const handleNotifClick = async (n: Notification) => {
+    if (!n.is_read) {
+      await markAsRead([n.id])
+    }
+    setShowNotif(false)
+    if (n.link) {
+      router.push(n.link)
+    }
   }
 
   const showSherpa = selectedBadge === 'sherpa' && isSherpa
@@ -101,21 +133,71 @@ export default function Header({
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setShowNotif(!showNotif)}
+                onClick={() => setShowNotif((v) => !v)}
                 className="relative rounded-lg p-2 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-light)] hover:text-[var(--color-text)]"
+                aria-label="通知"
               >
                 <Bell size={18} />
                 {unreadCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                    {unreadCount}
+                    {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
               </button>
               {showNotif && (
-                <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl">
-                  <p className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">通知</p>
-                  <p className="text-sm text-[var(--color-text-muted)]">新しい通知はありません</p>
-                </div>
+                <>
+                  <button
+                    type="button"
+                    className="fixed inset-0 z-[60] cursor-default"
+                    aria-label="通知を閉じる"
+                    onClick={() => setShowNotif(false)}
+                  />
+                  <div className="absolute right-0 z-[70] mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl">
+                    <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
+                      <p className="text-xs font-semibold text-[var(--color-text-muted)]">通知</p>
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void markAsRead()}
+                          className="text-[10px] text-[var(--color-accent)] hover:underline"
+                        >
+                          すべて既読
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <p className="px-3 py-4 text-sm text-[var(--color-text-muted)]">
+                          新しい通知はありません
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-[var(--color-border)]">
+                          {notifications.map((n) => (
+                            <li key={n.id}>
+                              <button
+                                type="button"
+                                onClick={() => void handleNotifClick(n)}
+                                className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-light)] ${
+                                  !n.is_read ? 'bg-[var(--color-accent)]/5' : ''
+                                }`}
+                              >
+                                <p className="text-sm font-medium leading-snug">{n.title}</p>
+                                {n.body ? (
+                                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)] line-clamp-2">
+                                    {n.body}
+                                  </p>
+                                ) : null}
+                                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                                  {formatNotifTime(n.created_at)}
+                                </p>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
 

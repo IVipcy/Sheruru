@@ -266,6 +266,7 @@ create table public.notifications (
 alter table public.notifications enable row level security;
 create policy "Users can view own notifications" on public.notifications for select using (auth.uid() = user_id);
 create policy "Users can update own notifications" on public.notifications for update using (auth.uid() = user_id);
+create policy "Users can insert notifications for others" on public.notifications for insert to authenticated with check (auth.uid() is not null and user_id <> auth.uid());
 
 create index idx_notifications_user on public.notifications(user_id, is_read, created_at desc);
 
@@ -289,6 +290,7 @@ create table public.knowledge_vectors (
 
 alter table public.knowledge_vectors enable row level security;
 create policy "Anyone can read knowledge" on public.knowledge_vectors for select using (true);
+create policy "Authenticated can insert knowledge" on public.knowledge_vectors for insert to authenticated with check (true);
 
 -- Vector similarity search index (IVFFlat for performance)
 create index idx_knowledge_embedding on public.knowledge_vectors
