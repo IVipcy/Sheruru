@@ -72,6 +72,8 @@ function ChatContent() {
   const localChatStartedRef = useRef(false)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
+  /** 同一ストリームで tts イベントを待っている */
+  const awaitingChatTtsEventRef = useRef(false)
 
   const clearTtsPrefetch = useCallback(() => {
     ttsPrefetchRef.current?.abort.abort()
@@ -260,6 +262,13 @@ function ChatContent() {
     return new Blob(parts, { type: 'audio/mpeg' })
   }, [])
 
+  const base64ToAudioBlob = useCallback((audioBase64: string) => {
+    const binary = atob(audioBase64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return new Blob([bytes], { type: 'audio/mpeg' })
+  }, [])
+
   /** 回答確定後の TTS 先読み（サーバー側 warm と共有キャッシュを利用） */
   const tryPrefetchFullTts = useCallback(
     (content: string) => {
@@ -382,15 +391,12 @@ function ChatContent() {
     []
   )
 
-  const playTTS = useCallback(
-    (text: string): Promise<void> => {
+  const playTtsBlob = useCallback(
+    (blob: Blob, displayText: string): Promise<void> => {
       clearMutedMotion()
       disposeTts()
       setTtsError(null)
       setPendingTtsText(null)
-
-      const prefetched = ttsPrefetchRef.current
-      ttsPrefetchRef.current = null
 
       const ac = new AbortController()
       ttsFetchAbortRef.current = ac
@@ -402,12 +408,6 @@ function ChatContent() {
         }
       }
 
-      const prepared = prepareTtsText(text)
-      if (!prepared) {
-        finish()
-        return Promise.resolve()
-      }
-
       const startAvatarMotion = () => {
         setIsTalking(true)
         setIsPlayingAudio(true)
@@ -416,18 +416,8 @@ function ChatContent() {
 
       return (async () => {
         try {
-          let blob: Blob
-          if (prefetched?.textKey === prepared) {
-            try {
-              blob = await prefetched.promise
-            } catch {
-              blob = await fetchTtsBlob(prepared, signal)
-            }
-          } else {
-            blob = await fetchTtsBlob(prepared, signal)
-          }
           if (signal.aborted) return
-          const played = await playAudioBlob(blob, signal, text, startAvatarMotion)
+          const played = await playAudioBlob(blob, signal, displayText, startAvatarMotion)
           if (played !== 'ok') return
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') {
@@ -445,7 +435,45 @@ function ChatContent() {
         }
       })()
     },
-    [clearMutedMotion, disposeTts, fetchTtsBlob, playAudioBlob]
+    [clearMutedMotion, disposeTts, playAudioBlob]
+  )
+
+  const playTTS = useCallback(
+    (text: string): Promise<void> => {
+      const prefetched = ttsPrefetchRef.current
+      ttsPrefetchRef.current = null
+
+      const prepared = prepareTtsText(text)
+      if (!prepared) return Promise.resolve()
+
+      const ac = new AbortController()
+      ttsFetchAbortRef.current = ac
+      const signal = ac.signal
+
+      return (async () => {
+        try {
+          let blob: Blob
+          if (prefetched?.textKey === prepared) {
+            try {
+              blob = await prefetched.promise
+            } catch {
+              if (signal.aborted) return
+              blob = await fetchTtsBlob(text, signal)
+            }
+          } else {
+            if (signal.aborted) return
+            blob = await fetchTtsBlob(text, signal)
+          }
+          if (signal.aborted) return
+          await playTtsBlob(blob, text)
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'AbortError') && !signal.aborted) {
+            setTtsError(err instanceof Error ? err.message : '音声の再生に失敗しました')
+          }
+        }
+      })()
+    },
+    [fetchTtsBlob, playTtsBlob]
   )
 
   const sendMessage = useCallback(async (text: string) => {
@@ -499,6 +527,8 @@ function ChatContent() {
       }])
 
       let ttsPromise: Promise<void> | null = null
+      let ttsFallbackText: string | null = null
+      awaitingChatTtsEventRef.current = false
 
       while (reader) {
         const { done, value } = await reader.read()
@@ -522,6 +552,15 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
+              if (audioEnabled && /\[\[(?:次の質問|選択肢):/.test(aiContent)) {
+                tryPrefetchFullTts(aiContent)
+              }
+            } else if (event.type === 'tts' && typeof event.audioBase64 === 'string') {
+              awaitingChatTtsEventRef.current = false
+              if (audioEnabled) {
+                const blob = base64ToAudioBlob(event.audioBase64)
+                ttsPromise = playTtsBlob(blob, prepareTtsText(aiContent) || aiContent)
+              }
             } else if (event.type === 'done') {
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
@@ -535,7 +574,8 @@ function ChatContent() {
               if (ttsContent) {
                 if (audioEnabled) {
                   tryPrefetchFullTts(aiContent)
-                  ttsPromise = playTTS(ttsContent)
+                  ttsFallbackText = ttsContent
+                  awaitingChatTtsEventRef.current = true
                 } else {
                   ttsPromise = playMutedTalkingMotion(ttsContent)
                 }
@@ -548,6 +588,11 @@ function ChatContent() {
             }
           } catch { /* skip invalid JSON */ }
         }
+      }
+
+      if (awaitingChatTtsEventRef.current && ttsFallbackText) {
+        awaitingChatTtsEventRef.current = false
+        ttsPromise = playTTS(ttsFallbackText)
       }
 
       if (ttsPromise) {
@@ -577,6 +622,8 @@ function ChatContent() {
     unlockAudioPlayback,
     clearTtsPrefetch,
     tryPrefetchFullTts,
+    base64ToAudioBlob,
+    playTtsBlob,
   ])
 
   const toggleRecording = useCallback(() => {

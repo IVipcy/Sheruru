@@ -1,7 +1,14 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { openai, EMBEDDING_MODEL, CHAT_MODEL, SYSTEM_PROMPTS } from '@/lib/openai'
-import { warmTtsFromChatContent } from '@/lib/tts-warm-cache'
+import { isTtsConfigured } from '@/lib/generate-tts'
+import {
+  ensureTtsInflight,
+  getInflightTts,
+  maybeWarmTtsDuringChatStream,
+  warmTtsFromChatContent,
+} from '@/lib/tts-warm-cache'
+import { prepareTtsText } from '@/lib/tts-text'
 
 export const runtime = 'nodejs'
 
@@ -119,30 +126,50 @@ ${context}
         const content = chunk.choices[0]?.delta?.content || ''
         if (content) {
           fullResponse += content
+          maybeWarmTtsDuringChatStream(fullResponse)
           controller.enqueue(encoder.encode(
             `data: ${JSON.stringify({ type: 'token', content })}\n\n`
           ))
         }
       }
 
-      // テキスト表示完了と同時に TTS 生成を開始（クライアントの再生待ちを短縮）
       warmTtsFromChatContent(fullResponse)
+      const ttsKey = prepareTtsText(fullResponse)
 
       controller.enqueue(encoder.encode(
         `data: ${JSON.stringify({ type: 'done' })}\n\n`
       ))
 
-      const { data: savedMsg } = await supabase.from('messages').insert({
-        conversation_id: convId,
-        role: 'assistant',
-        content: fullResponse,
-        emotion,
-      }).select('id').single()
+      const ttsAudioPromise =
+        isTtsConfigured() && ttsKey
+          ? (getInflightTts(ttsKey) ?? ensureTtsInflight(ttsKey)).catch(() => null)
+          : Promise.resolve(null)
+
+      const [{ data: savedMsg }, ttsBuffer] = await Promise.all([
+        supabase
+          .from('messages')
+          .insert({
+            conversation_id: convId,
+            role: 'assistant',
+            content: fullResponse,
+            emotion,
+          })
+          .select('id')
+          .single(),
+        ttsAudioPromise,
+      ])
 
       void supabase
         .from('conversations')
         .update({ message_count: (history?.length || 0) + 2 })
         .eq('id', convId)
+
+      if (ttsBuffer) {
+        const audioBase64 = Buffer.from(ttsBuffer).toString('base64')
+        controller.enqueue(encoder.encode(
+          `data: ${JSON.stringify({ type: 'tts', audioBase64 })}\n\n`
+        ))
+      }
 
       if (savedMsg?.id) {
         controller.enqueue(encoder.encode(

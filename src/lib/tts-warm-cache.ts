@@ -26,6 +26,12 @@ export function warmTtsFromChatContent(rawContent: string): void {
   )
 }
 
+/** 選択肢マーカーが出たら全文完了前に TTS を開始（テキスト表示と並行生成） */
+export function maybeWarmTtsDuringChatStream(rawContent: string): void {
+  if (!/\[\[(?:次の質問|選択肢):/.test(rawContent)) return
+  warmTtsFromChatContent(rawContent)
+}
+
 export function getInflightTts(key: string): Promise<ArrayBuffer> | undefined {
   return inflight.get(key)
 }

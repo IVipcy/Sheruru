@@ -1,7 +1,8 @@
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const ELEVENLABS_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID?.trim() || '21m00Tcm4TlvDq8ikWAM'
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5'
+/** Eleven v3（UI 表記のフラッグシップモデル） */
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3'
 /** 未設定時 1.56（従来 1.3 の約 1.2 倍速） */
 export const ELEVENLABS_TTS_SPEED = Math.min(
   4,
