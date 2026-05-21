@@ -10,6 +10,33 @@ export const ELEVENLABS_TTS_SPEED = Math.min(
 )
 
 const OUTPUT_FORMAT = 'mp3_44100_128'
+/** プラン上限(10)を他ユーザーと共有するため、同時 ElevenLabs 呼び出しを抑える */
+const MAX_CONCURRENT_TTS = Math.min(
+  9,
+  Math.max(1, Number(process.env.ELEVENLABS_MAX_CONCURRENT) || 2)
+)
+
+let activeTtsCalls = 0
+const ttsSlotQueue: Array<() => void> = []
+
+async function acquireTtsSlot(): Promise<void> {
+  if (activeTtsCalls < MAX_CONCURRENT_TTS) {
+    activeTtsCalls++
+    return
+  }
+  await new Promise<void>((resolve) => {
+    ttsSlotQueue.push(() => {
+      activeTtsCalls++
+      resolve()
+    })
+  })
+}
+
+function releaseTtsSlot(): void {
+  activeTtsCalls = Math.max(0, activeTtsCalls - 1)
+  const next = ttsSlotQueue.shift()
+  if (next) next()
+}
 
 export function isTtsConfigured(): boolean {
   return Boolean(ELEVENLABS_API_KEY)
@@ -46,7 +73,6 @@ function ttsUrl(stream: boolean): string {
     : `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`
   const url = new URL(path)
   url.searchParams.set('output_format', OUTPUT_FORMAT)
-  // v3 では非対応・非推奨。クエリにも入れない（ボディに入れていたのが 422 の原因になり得る）
   if (stream && !isElevenV3Model(ELEVENLABS_MODEL_ID)) {
     url.searchParams.set('optimize_streaming_latency', '4')
   }
@@ -78,6 +104,9 @@ function parseElevenLabsError(status: number, raw: string): Error {
   if (voiceMissing) {
     message =
       'Voice ID が無効です（削除済みの可能性）。ElevenLabs で別のボイスを選び直すか、ELEVENLABS_VOICE_ID を空にしてプリセット音声を使ってください'
+  } else if (/too many concurrent/i.test(message)) {
+    message =
+      '音声生成が混み合っています。少し待ってからもう一度お試しください。'
   } else if (/model.*not.*available|does not support|invalid model/i.test(message)) {
     message = `${message}（ボイスとモデルの組み合わせを ElevenLabs で確認してください）`
   }
@@ -87,7 +116,11 @@ function parseElevenLabsError(status: number, raw: string): Error {
   return error
 }
 
-async function requestTts(ttsText: string, stream: boolean): Promise<Response> {
+async function requestTts(
+  ttsText: string,
+  stream: boolean,
+  signal?: AbortSignal
+): Promise<Response> {
   return fetch(ttsUrl(stream), {
     method: 'POST',
     headers: {
@@ -96,10 +129,28 @@ async function requestTts(ttsText: string, stream: boolean): Promise<Response> {
       Accept: 'audio/mpeg',
     },
     body: JSON.stringify(buildRequestBody(ttsText)),
+    signal,
   })
 }
 
-export async function generateTtsMpegBuffer(ttsText: string): Promise<ArrayBuffer> {
+async function fetchTtsResponse(ttsText: string, signal?: AbortSignal): Promise<Response> {
+  // v3 は stream + convert の二重呼び出しを避け、1 リクエストのみ
+  const useStream = !isElevenV3Model(ELEVENLABS_MODEL_ID)
+  let response = await requestTts(ttsText, useStream, signal)
+
+  if (!response.ok && isElevenV3Model(ELEVENLABS_MODEL_ID)) {
+    const errText = await response.text()
+    console.error('ElevenLabs stream error (v3):', errText)
+    response = await requestTts(ttsText, false, signal)
+  }
+
+  return response
+}
+
+export async function generateTtsMpegBuffer(
+  ttsText: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
   if (!ELEVENLABS_API_KEY) {
     throw new Error('TTS not configured')
   }
@@ -107,27 +158,22 @@ export async function generateTtsMpegBuffer(ttsText: string): Promise<ArrayBuffe
     throw new Error('Missing text')
   }
 
-  let response = await requestTts(ttsText, true)
+  await acquireTtsSlot()
+  try {
+    const response = await fetchTtsResponse(ttsText, signal)
 
-  // v3 で stream が失敗した場合は通常エンドポイントへフォールバック
-  if (!response.ok && isElevenV3Model(ELEVENLABS_MODEL_ID)) {
-    const errText = await response.text()
-    console.error('ElevenLabs stream error (v3):', errText)
-    response = await requestTts(ttsText, false)
     if (!response.ok) {
-      const err2 = await response.text()
-      console.error('ElevenLabs convert error (v3):', err2)
-      throw parseElevenLabsError(response.status, err2 || errText)
+      const err = await response.text()
+      console.error('ElevenLabs error:', err)
+      throw parseElevenLabsError(response.status, err)
     }
-  } else if (!response.ok) {
-    const err = await response.text()
-    console.error('ElevenLabs error:', err)
-    throw parseElevenLabsError(response.status, err)
-  }
 
-  if (!response.body) {
-    throw new Error('TTS stream empty')
-  }
+    if (!response.body) {
+      throw new Error('TTS stream empty')
+    }
 
-  return response.arrayBuffer()
+    return response.arrayBuffer()
+  } finally {
+    releaseTtsSlot()
+  }
 }

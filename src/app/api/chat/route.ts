@@ -2,12 +2,7 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { openai, EMBEDDING_MODEL, CHAT_MODEL, SYSTEM_PROMPTS } from '@/lib/openai'
 import { isTtsConfigured } from '@/lib/generate-tts'
-import {
-  ensureTtsInflight,
-  getInflightTts,
-  maybeWarmTtsDuringChatStream,
-  warmTtsFromChatContent,
-} from '@/lib/tts-warm-cache'
+import { getInflightTts, warmTtsFromChatContent } from '@/lib/tts-warm-cache'
 import { prepareTtsText } from '@/lib/tts-text'
 
 export const runtime = 'nodejs'
@@ -126,7 +121,6 @@ ${context}
         const content = chunk.choices[0]?.delta?.content || ''
         if (content) {
           fullResponse += content
-          maybeWarmTtsDuringChatStream(fullResponse)
           controller.enqueue(encoder.encode(
             `data: ${JSON.stringify({ type: 'token', content })}\n\n`
           ))
@@ -143,7 +137,7 @@ ${context}
       let ttsErrorMessage: string | null = null
       const ttsAudioPromise =
         isTtsConfigured() && ttsKey
-          ? (getInflightTts(ttsKey) ?? ensureTtsInflight(ttsKey)).catch((err) => {
+          ? getInflightTts(ttsKey)?.catch((err) => {
               ttsErrorMessage =
                 err instanceof Error ? err.message : 'TTS generation failed'
               console.error('Chat TTS error:', err)

@@ -1,49 +1,76 @@
 import { generateTtsMpegBuffer, isTtsConfigured } from '@/lib/generate-tts'
 import { prepareTtsText } from '@/lib/tts-text'
 
-const MAX_CACHE = 24
-const inflight = new Map<string, Promise<ArrayBuffer>>()
+const MAX_CACHE = 16
+
+type InflightEntry = {
+  abort: AbortController
+  promise: Promise<ArrayBuffer>
+}
+
+const inflight = new Map<string, InflightEntry>()
 
 function trimCache() {
   while (inflight.size > MAX_CACHE) {
     const first = inflight.keys().next().value
-    if (first) inflight.delete(first)
+    if (first) {
+      inflight.get(first)?.abort.abort()
+      inflight.delete(first)
+    }
   }
 }
 
-/** GPT 完了直後に TTS 生成を始める（クライアントの /api/tts が待ち時間短縮できる） */
+/** 別テキストの進行中 TTS を止め、同時リクエスト数を抑える */
+function cancelOtherInflight(keepKey: string) {
+  for (const [key, entry] of inflight) {
+    if (key !== keepKey) {
+      entry.abort.abort()
+      inflight.delete(key)
+    }
+  }
+}
+
+/**
+ * 回答 1 件につき 1 回だけ呼ぶ（ストリーム途中の warm はしない）
+ */
 export function warmTtsFromChatContent(rawContent: string): void {
   if (!isTtsConfigured()) return
   const key = prepareTtsText(rawContent)
-  if (!key || inflight.has(key)) return
-  trimCache()
-  inflight.set(
-    key,
-    generateTtsMpegBuffer(key).catch((err) => {
-      inflight.delete(key)
-      throw err
-    })
-  )
-}
+  if (!key) return
+  if (inflight.has(key)) return
 
-/** 選択肢マーカーが出たら全文完了前に TTS を開始（テキスト表示と並行生成） */
-export function maybeWarmTtsDuringChatStream(rawContent: string): void {
-  if (!/\[\[(?:次の質問|選択肢):/.test(rawContent)) return
-  warmTtsFromChatContent(rawContent)
+  cancelOtherInflight(key)
+  trimCache()
+
+  const abort = new AbortController()
+  const promise = generateTtsMpegBuffer(key, abort.signal).catch((err) => {
+    if (inflight.get(key)?.promise === promise) {
+      inflight.delete(key)
+    }
+    throw err
+  })
+
+  inflight.set(key, { abort, promise })
 }
 
 export function getInflightTts(key: string): Promise<ArrayBuffer> | undefined {
-  return inflight.get(key)
+  return inflight.get(key)?.promise
 }
 
+/** キャッシュに無いときだけ 1 本生成（通常は warm 済み） */
 export function ensureTtsInflight(key: string): Promise<ArrayBuffer> {
   const existing = inflight.get(key)
-  if (existing) return existing
-  trimCache()
-  const promise = generateTtsMpegBuffer(key).catch((err) => {
+  if (existing) return existing.promise
+
+  warmTtsFromChatContent(key)
+  const started = inflight.get(key)
+  if (started) return started.promise
+
+  const abort = new AbortController()
+  const promise = generateTtsMpegBuffer(key, abort.signal).catch((err) => {
     inflight.delete(key)
     throw err
   })
-  inflight.set(key, promise)
+  inflight.set(key, { abort, promise })
   return promise
 }

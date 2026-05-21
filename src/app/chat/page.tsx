@@ -269,25 +269,6 @@ function ChatContent() {
     return new Blob([bytes], { type: 'audio/mpeg' })
   }, [])
 
-  /** 回答確定後の TTS 先読み（サーバー側 warm と共有キャッシュを利用） */
-  const tryPrefetchFullTts = useCallback(
-    (content: string) => {
-      if (!audioEnabled) return
-      const textKey = prepareTtsText(content)
-      if (!textKey) return
-      const cur = ttsPrefetchRef.current
-      if (cur?.textKey === textKey) return
-      cur?.abort.abort()
-      const abort = new AbortController()
-      ttsPrefetchRef.current = {
-        textKey,
-        promise: fetchTtsBlob(content, abort.signal),
-        abort,
-      }
-    },
-    [audioEnabled, fetchTtsBlob]
-  )
-
   const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
     clearMutedMotion()
     const duration = estimateSpeechDurationMs(text)
@@ -440,9 +421,6 @@ function ChatContent() {
 
   const playTTS = useCallback(
     (text: string): Promise<void> => {
-      const prefetched = ttsPrefetchRef.current
-      ttsPrefetchRef.current = null
-
       const prepared = prepareTtsText(text)
       if (!prepared) return Promise.resolve()
 
@@ -452,18 +430,8 @@ function ChatContent() {
 
       return (async () => {
         try {
-          let blob: Blob
-          if (prefetched?.textKey === prepared) {
-            try {
-              blob = await prefetched.promise
-            } catch {
-              if (signal.aborted) return
-              blob = await fetchTtsBlob(text, signal)
-            }
-          } else {
-            if (signal.aborted) return
-            blob = await fetchTtsBlob(text, signal)
-          }
+          if (signal.aborted) return
+          const blob = await fetchTtsBlob(text, signal)
           if (signal.aborted) return
           await playTtsBlob(blob, text)
         } catch (err) {
@@ -552,9 +520,6 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
-              if (audioEnabled && /\[\[(?:次の質問|選択肢):/.test(aiContent)) {
-                tryPrefetchFullTts(aiContent)
-              }
             } else if (event.type === 'tts' && typeof event.audioBase64 === 'string') {
               awaitingChatTtsEventRef.current = false
               if (audioEnabled) {
@@ -579,7 +544,6 @@ function ChatContent() {
               const ttsContent = prepareTtsText(aiContent)
               if (ttsContent) {
                 if (audioEnabled) {
-                  tryPrefetchFullTts(aiContent)
                   ttsFallbackText = ttsContent
                   awaitingChatTtsEventRef.current = true
                 } else {
@@ -627,7 +591,6 @@ function ChatContent() {
     playMutedTalkingMotion,
     unlockAudioPlayback,
     clearTtsPrefetch,
-    tryPrefetchFullTts,
     base64ToAudioBlob,
     playTtsBlob,
   ])
