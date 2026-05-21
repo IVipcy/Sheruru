@@ -44,16 +44,16 @@ export default function UnsolvedListPage() {
         onLogout={signOut}
       />
 
-      <main className="mx-auto max-w-4xl px-4 py-6">
+      <main className="mx-auto max-w-4xl px-3 py-4 sm:px-4 sm:py-6">
         <h2 className="mb-6 text-xl font-bold">未解決BOX</h2>
 
         {/* Status Tabs */}
-        <div className="mb-6 flex gap-2">
+        <div className="scrollbar-hide -mx-1 mb-6 flex gap-2 overflow-x-auto px-1 pb-1">
           {STATUS_TABS.map((tab) => (
             <button
               key={tab.value}
               onClick={() => setStatus(tab.value)}
-              className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 status === tab.value
                   ? 'bg-[var(--color-primary)] text-white'
                   : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-light)]'

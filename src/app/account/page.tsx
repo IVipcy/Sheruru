@@ -74,7 +74,7 @@ export default function AccountPage() {
         onLogout={signOut}
       />
 
-      <main className="mx-auto max-w-3xl px-4 py-8">
+      <main className="mx-auto max-w-3xl px-3 py-6 sm:px-4 sm:py-8">
         <h2 className="mb-6 text-xl font-bold">アカウント設定</h2>
 
         <div className="space-y-6">

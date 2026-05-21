@@ -141,7 +141,7 @@ export default function UnsolvedDetailPage() {
         onLogout={signOut}
       />
 
-      <main className="mx-auto max-w-3xl px-4 py-6">
+      <main className="mx-auto max-w-3xl px-3 py-4 sm:px-4 sm:py-6">
         <Link href="/unsolved" className="mb-4 inline-flex items-center gap-1 text-sm text-[var(--color-accent)] hover:underline">
           <ArrowLeft size={14} /> 一覧に戻る
         </Link>

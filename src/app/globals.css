@@ -31,3 +31,11 @@ body {
   background: var(--color-border);
   border-radius: 3px;
 }
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

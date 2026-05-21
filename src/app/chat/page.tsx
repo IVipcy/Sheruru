@@ -689,7 +689,7 @@ function ChatContent() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-[100dvh] flex-col">
       <Header
         displayName={profile?.display_name}
         badgeRank={profile?.good_badge_rank}
@@ -697,9 +697,17 @@ function ChatContent() {
         selectedBadge={(profile?.selected_badge as 'good' | 'sherpa') || 'good'}
         onLogout={signOut}
       />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Live2D Avatar Area */}
-        {/* lg+: アバター 40% / チャット 60%（flex-basis で固定） */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        {/* スマホ: 上部コンパクトアバター */}
+        <div className="relative h-36 shrink-0 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] lg:hidden">
+          <Live2DAvatar
+            emotion={currentEmotion}
+            isTalking={isTalking}
+            className="h-full w-full"
+          />
+        </div>
+
+        {/* デスクトップ: 左アバター 40% */}
         <div className="hidden min-h-0 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex lg:basis-2/5 lg:grow-0">
           <div className="relative min-h-0 flex-1 p-2 sm:p-3">
             <Live2DAvatar
@@ -711,10 +719,9 @@ function ChatContent() {
           <p className="shrink-0 pb-2 text-center text-xs text-[var(--color-text-muted)]">{APP_NAME}</p>
         </div>
 
-        {/* Chat Area */}
+        {/* チャット（スマホは残り高さいっぱい） */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:basis-3/5 lg:grow-0 lg:shrink-0">
-          {/* Mode indicator */}
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
+          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 sm:px-6 sm:py-3">
             <span className={`text-sm font-semibold ${modeInfo.color}`}>● {modeInfo.label}</span>
             <button
               onClick={() => {
@@ -734,7 +741,7 @@ function ChatContent() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">
             <div className="mx-auto w-full max-w-5xl space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -817,8 +824,8 @@ function ChatContent() {
 
           {/* Hierarchical Suggestions */}
           {showSuggestions && (
-            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3">
-              <div className="mx-auto w-full max-w-5xl px-6">
+            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-6 sm:py-3">
+              <div className="mx-auto w-full max-w-5xl">
                 {suggestionPath.length > 0 && (
                   <button
                     onClick={() => setSuggestionPath((prev) => prev.slice(0, -1))}
@@ -847,7 +854,7 @@ function ChatContent() {
           )}
 
           {ttsError && (
-            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-2">
+            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-6">
               <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2">
                 <p className="text-xs text-orange-600">{ttsError}</p>
                 {pendingTtsText && audioEnabled && (
@@ -867,7 +874,7 @@ function ChatContent() {
           )}
 
           {/* Input */}
-          <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-4">
+          <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 sm:px-6 sm:py-4">
             <div className="mx-auto flex w-full max-w-5xl items-center gap-3">
               <button
                 onClick={toggleRecording}
