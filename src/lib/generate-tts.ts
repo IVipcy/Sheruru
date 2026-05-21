@@ -1,8 +1,8 @@
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
 const ELEVENLABS_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID?.trim() || '21m00Tcm4TlvDq8ikWAM'
-/** Eleven v3（UI 表記のフラッグシップモデル） */
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3'
+/** 会話向け・低レイテンシ（Flash v2.5）。v3 は ELEVENLABS_MODEL_ID=eleven_v3 で上書き可 */
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5'
 /** 未設定時 1.56（従来 1.3 の約 1.2 倍速） */
 export const ELEVENLABS_TTS_SPEED = Math.min(
   4,
@@ -13,7 +13,7 @@ const OUTPUT_FORMAT = 'mp3_44100_128'
 /** プラン上限(10)を他ユーザーと共有するため、同時 ElevenLabs 呼び出しを抑える */
 const MAX_CONCURRENT_TTS = Math.min(
   9,
-  Math.max(1, Number(process.env.ELEVENLABS_MAX_CONCURRENT) || 2)
+  Math.max(1, Number(process.env.ELEVENLABS_MAX_CONCURRENT) || 4)
 )
 
 let activeTtsCalls = 0
@@ -46,6 +46,10 @@ function isElevenV3Model(modelId: string): boolean {
   return modelId === 'eleven_v3' || modelId.startsWith('eleven_v3')
 }
 
+function isFlashOrTurboModel(modelId: string): boolean {
+  return /flash|turbo/i.test(modelId)
+}
+
 function buildVoiceSettings(modelId: string) {
   const base = {
     stability: 0.5,
@@ -55,6 +59,9 @@ function buildVoiceSettings(modelId: string) {
   }
   if (isElevenV3Model(modelId)) {
     return { ...base, style: 0.3 }
+  }
+  if (isFlashOrTurboModel(modelId)) {
+    return { ...base, style: 0.0 }
   }
   return { ...base, style: 0.5 }
 }
