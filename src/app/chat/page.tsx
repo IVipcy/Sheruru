@@ -7,8 +7,8 @@ import Live2DAvatar from '@/components/Live2DAvatar'
 import { useAuth } from '@/hooks/useAuth'
 import { SUGGESTIONS_BY_MODE, SuggestionNode } from '@/lib/suggestions'
 import { APP_NAME, AVATAR_ICON_PATH } from '@/lib/constants'
-import { applyTtsPronunciationFixes } from '@/lib/tts-pronunciation'
 import { stripMarkdownForDisplay } from '@/lib/strip-markdown'
+import { prepareTtsText } from '@/lib/tts-text'
 import Image from 'next/image'
 import { Send, ThumbsUp, AlertCircle, Mic, Volume2, VolumeX, ChevronLeft, RotateCcw } from 'lucide-react'
 
@@ -19,23 +19,6 @@ type MessageType = {
   content: string
   showActions?: boolean
   actionTaken?: 'good' | 'unsolved' | null
-}
-
-function stripSpeechText(raw: string): string {
-  return raw
-    .replace(/\[\[(?:選択肢|次の質問):.+?\]\]/g, '')
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .trim()
-}
-
-function prepareTtsText(text: string): string {
-  let ttsText = applyTtsPronunciationFixes(stripSpeechText(text))
-  if (ttsText.length > 2000) {
-    const cutoff = ttsText.slice(0, 2000).lastIndexOf('。')
-    ttsText = cutoff > 100 ? ttsText.slice(0, cutoff + 1) : ttsText.slice(0, 2000)
-  }
-  return ttsText
 }
 
 /** 日本語読み上げのおおよその長さ（ミュート時の口パク用） */
@@ -85,17 +68,12 @@ function ChatContent() {
     promise: Promise<Blob>
     abort: AbortController
   } | null>(null)
-  const ttsPrefetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** このセッションで送信済みなら、遅れて返った履歴で messages を上書きしない */
   const localChatStartedRef = useRef(false)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
 
   const clearTtsPrefetch = useCallback(() => {
-    if (ttsPrefetchDebounceRef.current) {
-      clearTimeout(ttsPrefetchDebounceRef.current)
-      ttsPrefetchDebounceRef.current = null
-    }
     ttsPrefetchRef.current?.abort.abort()
     ttsPrefetchRef.current = null
   }, [])
@@ -268,40 +246,37 @@ function ChatContent() {
       throw new Error((errBody as { error?: string }).error || msg)
     }
 
-    return res.blob()
+    if (!res.body) throw new Error('TTS stream empty')
+
+    const reader = res.body.getReader()
+    const parts: BlobPart[] = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (value) {
+        parts.push(value)
+      }
+      if (done) break
+    }
+    return new Blob(parts, { type: 'audio/mpeg' })
   }, [])
 
-  /** 全文 TTS を先読み（表示完了を待たず生成開始して待ち時間を短縮） */
+  /** 回答確定後の TTS 先読み（サーバー側 warm と共有キャッシュを利用） */
   const tryPrefetchFullTts = useCallback(
     (content: string) => {
       if (!audioEnabled) return
       const textKey = prepareTtsText(content)
       if (!textKey) return
-      if (ttsPrefetchRef.current?.textKey === textKey) return
-      ttsPrefetchRef.current?.abort.abort()
+      const cur = ttsPrefetchRef.current
+      if (cur?.textKey === textKey) return
+      cur?.abort.abort()
       const abort = new AbortController()
       ttsPrefetchRef.current = {
         textKey,
-        promise: fetchTtsBlob(textKey, abort.signal),
+        promise: fetchTtsBlob(content, abort.signal),
         abort,
       }
     },
     [audioEnabled, fetchTtsBlob]
-  )
-
-  /** ストリーム中にデバウンスで TTS 先読み（完了時の生成待ちを減らす） */
-  const scheduleTtsPrefetchWhileStreaming = useCallback(
-    (content: string) => {
-      if (!audioEnabled) return
-      const textKey = prepareTtsText(content)
-      if (textKey.length < 48) return
-      if (ttsPrefetchDebounceRef.current) clearTimeout(ttsPrefetchDebounceRef.current)
-      ttsPrefetchDebounceRef.current = setTimeout(() => {
-        ttsPrefetchDebounceRef.current = null
-        tryPrefetchFullTts(content)
-      }, 350)
-    },
-    [audioEnabled, tryPrefetchFullTts]
   )
 
   const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
@@ -547,12 +522,7 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
-              scheduleTtsPrefetchWhileStreaming(aiContent)
             } else if (event.type === 'done') {
-              if (ttsPrefetchDebounceRef.current) {
-                clearTimeout(ttsPrefetchDebounceRef.current)
-                ttsPrefetchDebounceRef.current = null
-              }
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
                 prev.map((m) =>
@@ -607,7 +577,6 @@ function ChatContent() {
     unlockAudioPlayback,
     clearTtsPrefetch,
     tryPrefetchFullTts,
-    scheduleTtsPrefetchWhileStreaming,
   ])
 
   const toggleRecording = useCallback(() => {

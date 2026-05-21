@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { openai, EMBEDDING_MODEL, CHAT_MODEL, SYSTEM_PROMPTS } from '@/lib/openai'
+import { warmTtsFromChatContent } from '@/lib/tts-warm-cache'
 
 export const runtime = 'nodejs'
 
@@ -124,7 +125,9 @@ ${context}
         }
       }
 
-      // テキスト表示完了を先に通知（DB保存待ちで TTS 開始が遅れないようにする）
+      // テキスト表示完了と同時に TTS 生成を開始（クライアントの再生待ちを短縮）
+      warmTtsFromChatContent(fullResponse)
+
       controller.enqueue(encoder.encode(
         `data: ${JSON.stringify({ type: 'done' })}\n\n`
       ))
