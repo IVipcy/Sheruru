@@ -38,31 +38,6 @@ function prepareTtsText(text: string): string {
   return ttsText
 }
 
-/** 文単位で TTS を分割（先頭セグメントだけ先に生成して再生開始を早める） */
-function splitTtsSegments(text: string): string[] {
-  const trimmed = prepareTtsText(text)
-  if (!trimmed) return []
-  const raw = trimmed.split(/(?<=[。！？\n])/).map((s) => s.trim()).filter(Boolean)
-  if (raw.length === 0) return [trimmed]
-  const merged: string[] = []
-  for (const part of raw) {
-    if (merged.length > 0 && merged[merged.length - 1].length < 12) {
-      merged[merged.length - 1] += part
-    } else {
-      merged.push(part)
-    }
-  }
-  return merged
-}
-
-function getFirstCompleteTtsSegment(text: string): string | null {
-  const segments = splitTtsSegments(text)
-  const first = segments[0]
-  if (!first || first.length < 6) return null
-  if (!/[。！？\n]$/.test(first)) return null
-  return first
-}
-
 /** 日本語読み上げのおおよその長さ（ミュート時の口パク用） */
 function estimateSpeechDurationMs(text: string): number {
   if (!text) return 0
@@ -106,7 +81,7 @@ function ChatContent() {
   const audioUnlockedRef = useRef(false)
   const mutedMotionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ttsPrefetchRef = useRef<{
-    segment: string
+    textKey: string
     promise: Promise<Blob>
     abort: AbortController
   } | null>(null)
@@ -283,19 +258,21 @@ function ChatContent() {
     return res.blob()
   }, [])
 
-  const tryPrefetchFirstTtsSegment = useCallback(
+  /** ストリーム完了時に全文 TTS を先読み（文分割再生による無音ギャップを防ぐ） */
+  const tryPrefetchFullTts = useCallback(
     (content: string) => {
-      if (!audioEnabled || ttsPrefetchRef.current) return
-      const segment = getFirstCompleteTtsSegment(content)
-      if (!segment) return
+      if (!audioEnabled) return
+      const textKey = prepareTtsText(content)
+      if (!textKey) return
+      clearTtsPrefetch()
       const abort = new AbortController()
       ttsPrefetchRef.current = {
-        segment,
-        promise: fetchTtsBlob(segment, abort.signal),
+        textKey,
+        promise: fetchTtsBlob(textKey, abort.signal),
         abort,
       }
     },
-    [audioEnabled, fetchTtsBlob]
+    [audioEnabled, fetchTtsBlob, clearTtsPrefetch]
   )
 
   const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
@@ -406,8 +383,8 @@ function ChatContent() {
         }
       }
 
-      const segments = splitTtsSegments(text)
-      if (segments.length === 0) {
+      const prepared = prepareTtsText(text)
+      if (!prepared) {
         finish()
         return Promise.resolve()
       }
@@ -419,23 +396,19 @@ function ChatContent() {
 
       return (async () => {
         try {
-          for (let i = 0; i < segments.length; i++) {
-            if (signal.aborted) break
-            const segment = segments[i]
-            let blob: Blob
-            if (i === 0 && prefetched?.segment === segment) {
-              try {
-                blob = await prefetched.promise
-              } catch {
-                blob = await fetchTtsBlob(segment, signal)
-              }
-            } else {
-              blob = await fetchTtsBlob(segment, signal)
+          let blob: Blob
+          if (prefetched?.textKey === prepared) {
+            try {
+              blob = await prefetched.promise
+            } catch {
+              blob = await fetchTtsBlob(prepared, signal)
             }
-            if (signal.aborted) break
-            const played = await playAudioBlob(blob, signal, text)
-            if (played !== 'ok') break
+          } else {
+            blob = await fetchTtsBlob(prepared, signal)
           }
+          if (signal.aborted) return
+          const played = await playAudioBlob(blob, signal, text)
+          if (played !== 'ok') return
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') {
             disposeTts()
@@ -528,7 +501,6 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
-              tryPrefetchFirstTtsSegment(aiContent)
             } else if (event.type === 'done') {
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
@@ -540,9 +512,12 @@ function ChatContent() {
               )
               const ttsContent = prepareTtsText(aiContent)
               if (ttsContent) {
-                ttsPromise = audioEnabled
-                  ? playTTS(ttsContent)
-                  : playMutedTalkingMotion(ttsContent)
+                if (audioEnabled) {
+                  tryPrefetchFullTts(aiContent)
+                  ttsPromise = playTTS(ttsContent)
+                } else {
+                  ttsPromise = playMutedTalkingMotion(ttsContent)
+                }
               }
             } else if (event.type === 'saved' && event.messageId) {
               serverMsgId = event.messageId
@@ -580,7 +555,7 @@ function ChatContent() {
     playMutedTalkingMotion,
     unlockAudioPlayback,
     clearTtsPrefetch,
-    tryPrefetchFirstTtsSegment,
+    tryPrefetchFullTts,
   ])
 
   const toggleRecording = useCallback(() => {
