@@ -85,10 +85,15 @@ function ChatContent() {
     promise: Promise<Blob>
     abort: AbortController
   } | null>(null)
+  const ttsPrefetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [ttsError, setTtsError] = useState<string | null>(null)
   const [pendingTtsText, setPendingTtsText] = useState<string | null>(null)
 
   const clearTtsPrefetch = useCallback(() => {
+    if (ttsPrefetchDebounceRef.current) {
+      clearTimeout(ttsPrefetchDebounceRef.current)
+      ttsPrefetchDebounceRef.current = null
+    }
     ttsPrefetchRef.current?.abort.abort()
     ttsPrefetchRef.current = null
   }, [])
@@ -258,13 +263,14 @@ function ChatContent() {
     return res.blob()
   }, [])
 
-  /** ストリーム完了時に全文 TTS を先読み（文分割再生による無音ギャップを防ぐ） */
+  /** 全文 TTS を先読み（表示完了を待たず生成開始して待ち時間を短縮） */
   const tryPrefetchFullTts = useCallback(
     (content: string) => {
       if (!audioEnabled) return
       const textKey = prepareTtsText(content)
       if (!textKey) return
-      clearTtsPrefetch()
+      if (ttsPrefetchRef.current?.textKey === textKey) return
+      ttsPrefetchRef.current?.abort.abort()
       const abort = new AbortController()
       ttsPrefetchRef.current = {
         textKey,
@@ -272,7 +278,22 @@ function ChatContent() {
         abort,
       }
     },
-    [audioEnabled, fetchTtsBlob, clearTtsPrefetch]
+    [audioEnabled, fetchTtsBlob]
+  )
+
+  /** ストリーム中にデバウンスで TTS 先読み（完了時の生成待ちを減らす） */
+  const scheduleTtsPrefetchWhileStreaming = useCallback(
+    (content: string) => {
+      if (!audioEnabled) return
+      const textKey = prepareTtsText(content)
+      if (textKey.length < 48) return
+      if (ttsPrefetchDebounceRef.current) clearTimeout(ttsPrefetchDebounceRef.current)
+      ttsPrefetchDebounceRef.current = setTimeout(() => {
+        ttsPrefetchDebounceRef.current = null
+        tryPrefetchFullTts(content)
+      }, 350)
+    },
+    [audioEnabled, tryPrefetchFullTts]
   )
 
   const playMutedTalkingMotion = useCallback((text: string): Promise<void> => {
@@ -295,7 +316,12 @@ function ChatContent() {
   }, [clearMutedMotion])
 
   const playAudioBlob = useCallback(
-    (audioBlob: Blob, signal: AbortSignal, fallbackText: string): Promise<'ok' | 'blocked' | 'error'> =>
+    (
+      audioBlob: Blob,
+      signal: AbortSignal,
+      fallbackText: string,
+      onPlaybackStart?: () => void
+    ): Promise<'ok' | 'blocked' | 'error'> =>
       new Promise((resolve) => {
         const audioUrl = URL.createObjectURL(audioBlob)
         currentTtsObjectUrlRef.current = audioUrl
@@ -334,9 +360,19 @@ function ChatContent() {
         setTtsError(null)
         setPendingTtsText(null)
 
+        let motionSynced = false
+        const syncMotionWithAudio = () => {
+          if (motionSynced || signal.aborted) return
+          motionSynced = true
+          onPlaybackStart?.()
+        }
+
+        audio.onplay = syncMotionWithAudio
+
         audio
           .play()
           .then(() => {
+            syncMotionWithAudio()
             if (signal.aborted) {
               audio.pause()
               cleanup()
@@ -389,10 +425,11 @@ function ChatContent() {
         return Promise.resolve()
       }
 
-      // TTS 生成待ちの間も口パクを開始（体感ラグ短縮）
-      setIsTalking(true)
-      setIsPlayingAudio(true)
-      setCurrentEmotion('neutraltalking')
+      const startAvatarMotion = () => {
+        setIsTalking(true)
+        setIsPlayingAudio(true)
+        setCurrentEmotion('neutraltalking')
+      }
 
       return (async () => {
         try {
@@ -407,7 +444,7 @@ function ChatContent() {
             blob = await fetchTtsBlob(prepared, signal)
           }
           if (signal.aborted) return
-          const played = await playAudioBlob(blob, signal, text)
+          const played = await playAudioBlob(blob, signal, text, startAvatarMotion)
           if (played !== 'ok') return
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') {
@@ -501,7 +538,12 @@ function ChatContent() {
               setMessages((prev) =>
                 prev.map((m) => m.id === aiMsgId ? { ...m, content: aiContent } : m)
               )
+              scheduleTtsPrefetchWhileStreaming(aiContent)
             } else if (event.type === 'done') {
+              if (ttsPrefetchDebounceRef.current) {
+                clearTimeout(ttsPrefetchDebounceRef.current)
+                ttsPrefetchDebounceRef.current = null
+              }
               const isDrillDown = /\[\[選択肢:.+?\]\]/.test(aiContent)
               setMessages((prev) =>
                 prev.map((m) =>
@@ -556,6 +598,7 @@ function ChatContent() {
     unlockAudioPlayback,
     clearTtsPrefetch,
     tryPrefetchFullTts,
+    scheduleTtsPrefetchWhileStreaming,
   ])
 
   const toggleRecording = useCallback(() => {
