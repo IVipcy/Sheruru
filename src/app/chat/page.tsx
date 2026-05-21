@@ -7,6 +7,8 @@ import Live2DAvatar from '@/components/Live2DAvatar'
 import { useAuth } from '@/hooks/useAuth'
 import { SUGGESTIONS_BY_MODE, SuggestionNode } from '@/lib/suggestions'
 import { APP_NAME, AVATAR_ICON_PATH } from '@/lib/constants'
+import { applyTtsPronunciationFixes } from '@/lib/tts-pronunciation'
+import { stripMarkdownForDisplay } from '@/lib/strip-markdown'
 import Image from 'next/image'
 import { Send, ThumbsUp, AlertCircle, Mic, Volume2, VolumeX, ChevronLeft, RotateCcw } from 'lucide-react'
 
@@ -28,7 +30,7 @@ function stripSpeechText(raw: string): string {
 }
 
 function prepareTtsText(text: string): string {
-  let ttsText = stripSpeechText(text)
+  let ttsText = applyTtsPronunciationFixes(stripSpeechText(text))
   if (ttsText.length > 2000) {
     const cutoff = ttsText.slice(0, 2000).lastIndexOf('。')
     ttsText = cutoff > 100 ? ttsText.slice(0, cutoff + 1) : ttsText.slice(0, 2000)
@@ -235,8 +237,9 @@ function ChatContent() {
 
   const parseMessageContent = (content: string): { text: string; choices: string[] } => {
     const match = content.match(/\[\[(?:選択肢|次の質問):(.+?)\]\]/)
-    if (!match) return { text: content, choices: [] }
-    const text = content.replace(/\[\[(?:選択肢|次の質問):.+?\]\]/, '').trim()
+    const body = content.replace(/\[\[(?:選択肢|次の質問):.+?\]\]/, '').trim()
+    const text = stripMarkdownForDisplay(body)
+    if (!match) return { text, choices: [] }
     const choices = match[1].split('|').map((c) => c.trim())
     return { text, choices }
   }

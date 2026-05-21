@@ -7,6 +7,7 @@ const ELEVENLABS_VOICE_ID =
   process.env.ELEVENLABS_VOICE_ID?.trim() || '21m00Tcm4TlvDq8ikWAM'
 /** turbo は multilingual_v2 より生成が速い（体感レイテンシ短縮） */
 const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5'
+const ELEVENLABS_TTS_SPEED = Math.min(4, Math.max(0.25, Number(process.env.ELEVENLABS_TTS_SPEED) || 1.3))
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
           similarity_boost: 0.75,
           style: 0.5,
           use_speaker_boost: true,
+          speed: ELEVENLABS_TTS_SPEED,
         },
       }),
     }
